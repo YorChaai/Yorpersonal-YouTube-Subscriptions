@@ -293,6 +293,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         setState(() {
           isStandaloneMode = false;
           channels = List<Map<String, dynamic>>.from(sData['channels'] ?? []);
+          _sortChannelsByWatchedDesc(channels);
           hasApiKey = sData['has_api_key'] ?? false;
           apiKeyPreview = sData['api_key_preview'] ?? '';
           defaultLimit = defLim;
@@ -539,6 +540,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         setState(() {
           isStandaloneMode = false;
           channels = List<Map<String, dynamic>>.from(sData['channels'] ?? []);
+          _sortChannelsByWatchedDesc(channels);
           hasApiKey = sData['has_api_key'] ?? false;
           apiKeyPreview = sData['api_key_preview'] ?? '';
           videos = List<Map<String, dynamic>>.from(vData['items'] ?? []);
@@ -727,6 +729,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     }
   }
 
+  void _sortChannelsByWatchedDesc(List<Map<String, dynamic>> list) {
+    list.sort((a, b) {
+      final wa = int.tryParse((a['watched_count'] ?? 0).toString()) ?? 0;
+      final wb = int.tryParse((b['watched_count'] ?? 0).toString()) ?? 0;
+      if (wb != wa) return wb.compareTo(wa);
+      final ta = (a['title'] ?? '').toString().toLowerCase();
+      final tb = (b['title'] ?? '').toString().toLowerCase();
+      return ta.compareTo(tb);
+    });
+  }
+
   int _getCreatorWatchedCount(String channelId, [Map<String, dynamic>? v]) {
     for (final c in channels) {
       if ((c['channel_id'] ?? '').toString() == channelId) {
@@ -754,6 +767,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             c['watched_count'] = nextCount;
           }
         }
+        _sortChannelsByWatchedDesc(channels);
+        _sortChannelsByWatchedDesc(_localChannels);
         for (final v in videos) {
           if ((v['channel_id'] ?? '').toString() == channelId) {
             v['watched_count'] = nextCount;

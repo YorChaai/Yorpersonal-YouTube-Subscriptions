@@ -209,7 +209,7 @@ def list_channels() -> list[dict]:
             FROM channels c
             LEFT JOIN videos v ON v.channel_id = c.channel_id
             GROUP BY c.channel_id
-            ORDER BY c.title ASC
+            ORDER BY COALESCE(c.watched_count, 0) DESC, c.title COLLATE NOCASE ASC
             """
         ).fetchall()
         return [dict(r) for r in rows]
