@@ -2489,7 +2489,7 @@ class _HoldToUnsubscribeMenuItem extends StatefulWidget {
 
 class _HoldToUnsubscribeMenuItemState extends State<_HoldToUnsubscribeMenuItem> {
   Timer? _holdTimer;
-  double _holdProgress = 0.0; // 0.0 .. 1.0 (1.5 detik)
+  double _holdProgress = 0.0; // 0.0 .. 1.0 (1 detik)
   bool _holding = false;
 
   void _startHolding() {
@@ -2499,7 +2499,7 @@ class _HoldToUnsubscribeMenuItemState extends State<_HoldToUnsubscribeMenuItem> 
       _holdProgress = 0.05;
     });
     const stepMs = 50;
-    const totalMs = 1500; // Tahan 1.5 detik
+    const totalMs = 1000; // Tahan 1 detik
     _holdTimer = Timer.periodic(const Duration(milliseconds: stepMs), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -2601,8 +2601,8 @@ class _HoldToUnsubscribeMenuItemState extends State<_HoldToUnsubscribeMenuItem> 
                 _holding
                     ? 'Tahan terus... ($pct%)'
                     : (widget.fastModeActive
-                        ? '⚡ Tahan 1.5 detik untuk langsung Unsubscribe'
-                        : '👆 Tahan 1.5 detik untuk Unsubscribe'),
+                        ? '⚡ Tahan 1 detik untuk langsung Unsubscribe'
+                        : '👆 Tahan 1 detik untuk Unsubscribe'),
                 style: TextStyle(
                   fontSize: 11,
                   color: _holding ? Colors.amberAccent : Colors.white54,
