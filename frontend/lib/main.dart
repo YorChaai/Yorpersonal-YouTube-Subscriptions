@@ -1351,6 +1351,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final savedLimit = tabLimits[tabKey] ?? defaultLimit;
     setState(() {
       selectedChannelId = cid;
+      if (cid.isEmpty) {
+        _searchCtrl.clear();
+        searchQuery = '';
+      }
       limit = (savedLimit == 25 || savedLimit == 50 || savedLimit == 100) ? savedLimit : 25;
       currentPage = 1;
     });
