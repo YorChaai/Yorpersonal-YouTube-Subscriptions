@@ -1,0 +1,26 @@
+# Python & Database lokal (menyimpan API Key, Channel ID & OAuth Token pribadi agar aman tidak bocor ke publik)
+backend/__pycache__/
+*.pyc
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+daftar_channel_youtube.csv
+backend/youtube_personal.db
+backend/youtube_personal.db-journal
+backend/youtube_personal.db-wal
+backend/youtube_personal.db-shm
+
+# Flutter & Build Artifacts
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/windows/flutter/ephemeral/
+frontend/linux/flutter/ephemeral/
+frontend/macos/Flutter/ephemeral/
+frontend/ios/Flutter/ephemeral/
+
