@@ -52,8 +52,13 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       false; // True jika 100% selesai sync dan tombol berubah HIJAU siap diklik
   int refreshNewVideosCount = 0;
   Timer? _refreshPollTimer;
+  bool syncingUsb = false;
+  int usbSyncProgress = 0; // 0..100 persen
+  bool usbSyncReadyGreen = false;
+  Timer? _usbSyncResetTimer;
   bool isStandaloneMode =
       false; // Otomatis aktif di HP jika tanpa backend Python
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Filter & Pagination State
   String sortBy = 'time'; // 'views' | 'likes' | 'time'
@@ -107,6 +112,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   @override
   void dispose() {
     _refreshPollTimer?.cancel();
+    _usbSyncResetTimer?.cancel();
     _searchCtrl.dispose();
     _yearInputCtrl.dispose();
     super.dispose();
@@ -957,8 +963,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     await _fetchVideos();
   }
 
-  Future<void> _fetchVideos() async {
-    setState(() => loading = true);
+  Future<void> _fetchVideos({bool silent = false}) async {
+    if (!silent) setState(() => loading = true);
     try {
       final stateRes = await http
           .get(Uri.parse('$baseUrl/api/state'))
@@ -1759,8 +1765,18 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   }
 
   Future<void> _performDirectUsbSync() async {
-    setState(() => loading = true);
+    if (syncingUsb) return;
+    setState(() {
+      syncingUsb = true;
+      usbSyncProgress = 15;
+      usbSyncReadyGreen = false;
+    });
+
     try {
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      setState(() => usbSyncProgress = 30);
+
       final payload = {
         'device': _deviceType,
         'videos': [
@@ -1789,6 +1805,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         ],
       };
 
+      if (!mounted) return;
+      setState(() => usbSyncProgress = 50);
+
       http.Response? syncResp;
       final candidates = <String>{
         baseUrl,
@@ -1803,7 +1822,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             Uri.parse('$cand/api/sync/exchange'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(payload),
-          ).timeout(const Duration(seconds: 4));
+          ).timeout(const Duration(seconds: 5));
           if (r.statusCode == 200) {
             baseUrl = cand;
             syncResp = r;
@@ -1813,6 +1832,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       }
 
       if (syncResp != null && syncResp.statusCode == 200) {
+        if (!mounted) return;
+        setState(() => usbSyncProgress = 75);
+
         final data = jsonDecode(syncResp.body);
         final remoteVids = (data['videos'] as List?) ?? [];
         final remoteChs = (data['channels'] as List?) ?? [];
@@ -1861,31 +1883,46 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         _sortChannelsByWatchedDesc(_localChannels);
         _sortChannelsByWatchedDesc(channels);
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: const Color(0xFF1B5E20),
-              content: Text(
-                '⚡ Sinkronisasi USB Berhasil! Data view HP & Laptop terhubung (${remoteVids.length} video, ${remoteChs.length} channel).',
-              ),
+        if (!mounted) return;
+        setState(() => usbSyncProgress = 90);
+
+        await _fetchVideos(silent: true);
+
+        if (!mounted) return;
+        setState(() {
+          usbSyncProgress = 100;
+          syncingUsb = false;
+          usbSyncReadyGreen = true;
+        });
+
+        _usbSyncResetTimer?.cancel();
+        _usbSyncResetTimer = Timer(const Duration(seconds: 4), () {
+          if (mounted) setState(() => usbSyncReadyGreen = false);
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1B5E20),
+            content: Text(
+              '⚡ Sync USB 100% Selesai! Data HP & Laptop terhubung (${remoteVids.length} video, ${remoteChs.length} channel).',
             ),
-          );
-        }
-        await _fetchVideos();
+          ),
+        );
       } else {
         throw Exception('Tidak dapat terhubung ke Laptop via kabel USB. Pastikan backend di laptop menyala.');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('⚠️ Gagal Sync USB: ${e.toString().replaceAll("Exception: ", "")}'),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => loading = false);
+      if (!mounted) return;
+      setState(() {
+        syncingUsb = false;
+        usbSyncProgress = 0;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('⚠️ Gagal Sync USB: ${e.toString().replaceAll("Exception: ", "")}'),
+        ),
+      );
     }
   }
 
@@ -2512,6 +2549,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           : 25;
       currentPage = 1;
     });
+    if (isMobileScreen && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
     _fetchVideos();
   }
 
@@ -2583,6 +2623,128 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     );
   }
 
+  Widget _buildUsbSyncButton({required bool isMobile}) {
+    if (syncingUsb) {
+      return Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF004D40),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.cyanAccent, width: 1.2),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    value: usbSyncProgress > 0 ? (usbSyncProgress / 100.0) : null,
+                    strokeWidth: 2.2,
+                    color: Colors.cyanAccent,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$usbSyncProgress%',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.cyanAccent,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (usbSyncReadyGreen) {
+      return ElevatedButton.icon(
+        onPressed: _performDirectUsbSync,
+        icon: const Icon(Icons.check_circle, size: 15, color: Colors.white),
+        label: Text(
+          isMobile ? '100%' : '100% Sync',
+          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF2E7D32),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(0, 34),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    }
+
+    return OutlinedButton.icon(
+      onPressed: _performDirectUsbSync,
+      icon: const Icon(Icons.usb, size: 16, color: Colors.cyanAccent),
+      label: Text(
+        isMobile ? 'Sync USB' : (_isHpDevice ? 'Sync Laptop (USB)' : 'Sync HP (USB)'),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: Color(0xFF00695C)),
+        backgroundColor: const Color(0xFF1B2A30),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        minimumSize: const Size(0, 34),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  Widget _buildRefreshYouTubeButton(bool isMobile) {
+    return ElevatedButton.icon(
+      onPressed: _manualRefreshYouTube,
+      icon: refreshingYouTube
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    value: refreshProgress > 0 ? (refreshProgress / 100.0) : null,
+                    strokeWidth: 2.2,
+                    color: Colors.white,
+                  ),
+                ],
+              ),
+            )
+          : Icon(
+              refreshReadyGreen ? Icons.check_circle : Icons.refresh,
+              size: 16,
+            ),
+      label: Text(
+        refreshingYouTube
+            ? '$refreshProgress%'
+            : (refreshReadyGreen
+                ? (isMobile ? 'Siap' : '100% Siap')
+                : (isMobile ? 'Refresh' : 'Refresh YouTube')),
+        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: refreshReadyGreen
+            ? const Color(0xFF2E7D32)
+            : const Color(0xFFFF0033),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        minimumSize: const Size(0, 34),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -2590,6 +2752,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final isCompactHeader = screenWidth < 1150;
 
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: isMobile
+          ? Drawer(
+              backgroundColor: const Color(0xFF0F0F0F),
+              child: SafeArea(
+                child: _buildSidebar(forceFull: true, isNarrow: false),
+              ),
+            )
+          : null,
       appBar: PreferredSize(
         preferredSize: Size.fromHeight(isMobile ? 104 : 60),
         child: Material(
@@ -2603,13 +2774,20 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   Row(
                     children: [
                       IconButton(
-                        tooltip:
-                            'Ubah Ukuran Sidebar (Penuh / Mini Ikon / Sembunyi)',
+                        tooltip: isMobile
+                            ? 'Daftar Channel (Subscriptions)'
+                            : 'Ubah Ukuran Sidebar (Penuh / Mini Ikon / Sembunyi)',
                         icon: const Icon(Icons.menu, color: Colors.white),
                         visualDensity: isMobile
                             ? VisualDensity.compact
                             : VisualDensity.standard,
-                        onPressed: _cycleSidebarMode,
+                        onPressed: () {
+                          if (isMobile) {
+                            _scaffoldKey.currentState?.openDrawer();
+                          } else {
+                            _cycleSidebarMode();
+                          }
+                        },
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -2651,136 +2829,45 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         )
                       else
                         const Spacer(),
-                      // Tombol khusus Refresh YouTube (Merah = Belum Refresh, Lingkaran Muter + % = Loading Background, Hijau = 100% Selesai & Klik untuk Tampilkan Video Baru)
-                      ElevatedButton.icon(
-                        onPressed: _manualRefreshYouTube,
-                        icon: refreshingYouTube
-                            ? SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.2,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                    Text(
-                                      '$refreshProgress%',
-                                      style: const TextStyle(
-                                        fontSize: 7.5,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : Icon(
-                                refreshReadyGreen
-                                    ? Icons.check_circle
-                                    : Icons.refresh,
-                                size: 17,
-                              ),
-                        label: Text(
-                          refreshingYouTube
-                              ? (screenWidth < 600
-                                    ? '$refreshProgress%'
-                                    : 'Sync $refreshProgress%')
-                              : refreshReadyGreen
-                              ? (screenWidth < 600
-                                    ? '100% Siap'
-                                    : 'Refresh YouTube (100%)')
-                              : (screenWidth < 600
-                                    ? 'Refresh'
-                                    : 'Refresh YouTube'),
-                          style: TextStyle(fontSize: isMobile ? 12.5 : 13.5),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: refreshReadyGreen
-                              ? const Color(
-                                  0xFF2E7D32,
-                                ) // HIJAU saat 100% selesai sync
-                              : const Color(
-                                  0xFFFF0033,
-                                ), // MERAH saat belum refresh / sedang berjalan
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(
-                            horizontal: isMobile ? 10 : 12,
-                            vertical: 8,
-                          ),
-                          visualDensity: isMobile
-                              ? VisualDensity.compact
-                              : VisualDensity.standard,
-                        ),
-                      ),
-                      SizedBox(width: isMobile ? 2 : 6),
-                      if (!isCompactHeader) ...[
-                        OutlinedButton.icon(
-                          onPressed: _showUsbSyncDialog,
-                          icon: const Icon(
-                            Icons.usb,
-                            size: 18,
-                            color: Colors.cyanAccent,
-                          ),
-                          label: Text(
-                            _isHpDevice ? 'Sync Laptop' : 'Sync HP (USB)',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFF303030)),
-                            backgroundColor: const Color(0xFF222222),
-                          ),
-                        ),
+
+                      // 1. Tombol Sync USB (Dengan animasi lingkaran 1-100% dan TIDAK membekukan layar)
+                      _buildUsbSyncButton(isMobile: isMobile),
+                      const SizedBox(width: 4),
+
+                      // 2. Tombol Refresh YouTube
+                      _buildRefreshYouTubeButton(isMobile),
+
+                      if (!isMobile) ...[
                         const SizedBox(width: 6),
-                        OutlinedButton.icon(
-                          onPressed: _exportExcelCsv,
-                          icon: const Icon(
-                            Icons.table_view,
-                            size: 18,
-                            color: Colors.greenAccent,
+                        if (!isCompactHeader) ...[
+                          OutlinedButton.icon(
+                            onPressed: _exportExcelCsv,
+                            icon: const Icon(
+                              Icons.table_view,
+                              size: 18,
+                              color: Colors.greenAccent,
+                            ),
+                            label: const Text(
+                              'Export Excel/CSV',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF303030)),
+                              backgroundColor: const Color(0xFF222222),
+                            ),
                           ),
-                          label: const Text(
-                            'Export Excel/CSV',
-                            style: TextStyle(color: Colors.white),
+                          const SizedBox(width: 6),
+                        ] else ...[
+                          IconButton(
+                            tooltip: 'Export Excel/CSV',
+                            onPressed: _exportExcelCsv,
+                            icon: const Icon(
+                              Icons.table_view,
+                              color: Colors.greenAccent,
+                              size: 20,
+                            ),
                           ),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFF303030)),
-                            backgroundColor: const Color(0xFF222222),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                      ] else ...[
-                        IconButton(
-                          tooltip: 'Sync USB (HP ⇄ Laptop)',
-                          visualDensity: isMobile
-                              ? VisualDensity.compact
-                              : VisualDensity.standard,
-                          onPressed: _showUsbSyncDialog,
-                          icon: const Icon(
-                            Icons.usb,
-                            color: Colors.cyanAccent,
-                            size: 20,
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Export Excel/CSV',
-                          visualDensity: isMobile
-                              ? VisualDensity.compact
-                              : VisualDensity.standard,
-                          onPressed: _exportExcelCsv,
-                          icon: const Icon(
-                            Icons.table_view,
-                            color: Colors.greenAccent,
-                            size: 20,
-                          ),
-                        ),
-                      ],
-                      if (!isMobile)
+                        ],
                         ElevatedButton.icon(
                           onPressed: _showAddChannelModal,
                           icon: const Icon(Icons.add, size: 18),
@@ -2791,32 +2878,85 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                             backgroundColor: const Color(0xFF272727),
                             foregroundColor: Colors.white,
                           ),
-                        )
-                      else
+                        ),
                         IconButton(
-                          tooltip: 'Tambah Channel',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: _showAddChannelModal,
-                          icon: const Icon(
-                            Icons.person_add_alt_1,
-                            color: Colors.white,
-                            size: 20,
+                          tooltip: 'Pengaturan API & Sync',
+                          onPressed: _showApiSettingsModal,
+                          icon: Icon(
+                            Icons.settings,
+                            size: 22,
+                            color: hasApiKey
+                                ? Colors.greenAccent
+                                : Colors.amberAccent,
                           ),
                         ),
-                      IconButton(
-                        tooltip: 'Pengaturan API & Sync',
-                        visualDensity: isMobile
-                            ? VisualDensity.compact
-                            : VisualDensity.standard,
-                        onPressed: _showApiSettingsModal,
-                        icon: Icon(
-                          Icons.settings,
-                          size: isMobile ? 20 : 22,
-                          color: hasApiKey
-                              ? Colors.greenAccent
-                              : Colors.amberAccent,
+                      ] else ...[
+                        // Pada HP: Menu Popup 3 Titik (Menghilangkan Right Overflow 49px sama sekali!)
+                        PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert, color: Colors.white, size: 22),
+                          tooltip: 'Menu Lainnya',
+                          color: const Color(0xFF212121),
+                          onSelected: (val) {
+                            if (val == 'add') _showAddChannelModal();
+                            if (val == 'csv') _exportExcelCsv();
+                            if (val == 'export_sync') _exportSyncJson();
+                            if (val == 'import_sync') _importSyncJson();
+                            if (val == 'settings') _showApiSettingsModal();
+                          },
+                          itemBuilder: (ctx) => [
+                            const PopupMenuItem(
+                              value: 'add',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.person_add_alt_1, size: 18, color: Colors.white),
+                                  SizedBox(width: 10),
+                                  Text('Tambah Channel', style: TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'csv',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.table_view, size: 18, color: Colors.greenAccent),
+                                  SizedBox(width: 10),
+                                  Text('Export Excel / CSV', style: TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'export_sync',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.upload, size: 18, color: Colors.cyanAccent),
+                                  SizedBox(width: 10),
+                                  Text('Salin JSON Sync', style: TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'import_sync',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.download, size: 18, color: Colors.cyanAccent),
+                                  SizedBox(width: 10),
+                                  Text('Tempel JSON Sync', style: TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'settings',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.settings, size: 18, color: Colors.amberAccent),
+                                  SizedBox(width: 10),
+                                  Text('Pengaturan API & IP', style: TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
+                      ],
                     ],
                   ),
                   if (isMobile) ...[
@@ -2829,52 +2969,33 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           ),
         ),
       ),
-      body: Stack(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (sidebarMode == 'mini' || (sidebarMode == 'full' && !isMobile))
-                _buildSidebar(isNarrow: isMobile),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (isMobile) _buildMobileQuickControlBar(),
-                    _buildFilterAndSortHeader(isMobile),
-                    Expanded(
-                      child: loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : LayoutBuilder(
-                              builder: (ctx, constraints) =>
-                                  _buildVideoGridWithPagination(
-                                    constraints.maxWidth,
-                                  ),
-                            ),
-                    ),
-                  ],
+          if (!isMobile && sidebarMode != 'hidden')
+            _buildSidebar(isNarrow: sidebarMode == 'mini'),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isMobile) ...[
+                  _buildMobileQuickControlBar(),
+                  _buildMobileActiveFilterBar(),
+                ],
+                if (!isMobile) _buildFilterAndSortHeader(false),
+                Expanded(
+                  child: loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : LayoutBuilder(
+                          builder: (ctx, constraints) =>
+                              _buildVideoGridWithPagination(
+                                constraints.maxWidth,
+                              ),
+                        ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          // Di layar HP / jendela sempit, mode 'full' tampil sebagai panel overlay di atas kiri agar tidak menjepit daftar video
-          if (isMobile && sidebarMode == 'full') ...[
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () {
-                  setState(() => sidebarMode = 'hidden');
-                  _saveUiPreferences(newSidebarMode: 'hidden');
-                },
-                child: Container(color: Colors.black54),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              child: _buildSidebar(isNarrow: false),
-            ),
-          ],
         ],
       ),
     );
@@ -3021,38 +3142,42 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       );
     }
 
-    return SizedBox(
-      width: isNarrow ? 190 : 240,
-      child: Material(
-        color: const Color(0xFF0F0F0F),
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _sidebarTile(
-                    icon: Icons.home_filled,
-                    title: 'Semua Follower (${channels.length})',
-                    selected: selectedChannelId.isEmpty,
-                    onTap: () => _selectChannelTab(''),
-                  ),
+    final sidebarContent = Material(
+      color: const Color(0xFF0F0F0F),
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _sidebarTile(
+                  icon: Icons.home_filled,
+                  title: 'Semua Follower (${channels.length})',
+                  selected: selectedChannelId.isEmpty,
+                  onTap: () => _selectChannelTab(''),
                 ),
-                if (!forceFull)
-                  IconButton(
-                    tooltip: 'Kecilkan Sidebar (Mode Ikon)',
-                    icon: const Icon(
-                      Icons.keyboard_double_arrow_left,
-                      size: 20,
-                      color: Colors.white60,
-                    ),
-                    onPressed: () {
-                      setState(() => sidebarMode = 'mini');
-                      _saveUiPreferences(newSidebarMode: 'mini');
-                    },
+              ),
+              if (forceFull)
+                IconButton(
+                  tooltip: 'Tutup',
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                  onPressed: () => Navigator.of(context).pop(),
+                )
+              else
+                IconButton(
+                  tooltip: 'Kecilkan Sidebar (Mode Ikon)',
+                  icon: const Icon(
+                    Icons.keyboard_double_arrow_left,
+                    size: 20,
+                    color: Colors.white60,
                   ),
-              ],
-            ),
+                  onPressed: () {
+                    setState(() => sidebarMode = 'mini');
+                    _saveUiPreferences(newSidebarMode: 'mini');
+                  },
+                ),
+            ],
+          ),
             const Divider(color: Color(0xFF272727), height: 24),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -3188,7 +3313,13 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             ),
           ],
         ),
-      ),
+      );
+    if (forceFull) {
+      return sidebarContent;
+    }
+    return SizedBox(
+      width: isNarrow ? 190 : 240,
+      child: sidebarContent,
     );
   }
 
@@ -3226,6 +3357,285 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     );
   }
 
+  void _showMobileFilterBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final periods = [
+              ('all', 'Semua Waktu'),
+              ('week', 'Minggu Ini'),
+              ('month', 'Bulan Ini'),
+              ('year', 'Tahun Ini'),
+            ];
+            final sorts = [
+              ('views', '🔥 View Terbanyak'),
+              ('likes', '👍 Like Terbanyak'),
+              ('time', '🕒 Waktu Upload'),
+            ];
+            final isCustomYear =
+                period.endsWith('y') &&
+                int.tryParse(period.substring(0, period.length - 1)) != null;
+
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Filter & Urutan Video',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white70),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Color(0xFF333333)),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Urutkan:',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: sorts.map((s) {
+                        final active = sortBy == s.$1;
+                        return ChoiceChip(
+                          label: Text(s.$2),
+                          selected: active,
+                          selectedColor: Colors.white,
+                          backgroundColor: const Color(0xFF2C2C2C),
+                          labelStyle: TextStyle(
+                            color: active ? Colors.black : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
+                          onSelected: (_) {
+                            setState(() {
+                              sortBy = s.$1;
+                              currentPage = 1;
+                            });
+                            setModalState(() {});
+                            _saveUiPreferences();
+                            _fetchVideos();
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Wilayah Konten:',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ('all', '🌐 Semua'),
+                        ('Nasional', '🇮🇩 Nasional'),
+                        ('Internasional', '🌍 Internasional'),
+                      ].map((reg) {
+                        final active = selectedRegion == reg.$1;
+                        return ChoiceChip(
+                          label: Text(reg.$2),
+                          selected: active,
+                          selectedColor: reg.$1 == 'Nasional'
+                              ? const Color(0xFFD32F2F)
+                              : (reg.$1 == 'Internasional'
+                                  ? const Color(0xFF1976D2)
+                                  : Colors.white),
+                          backgroundColor: const Color(0xFF2C2C2C),
+                          labelStyle: TextStyle(
+                            color: active
+                                ? (reg.$1 == 'all' ? Colors.black : Colors.white)
+                                : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
+                          onSelected: (_) {
+                            setState(() {
+                              selectedRegion = reg.$1;
+                              currentPage = 1;
+                            });
+                            setModalState(() {});
+                            _saveUiPreferences();
+                            _fetchVideos();
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Periode Upload:',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: periods.map((p) {
+                        final active = period == p.$1;
+                        return ChoiceChip(
+                          label: Text(p.$2),
+                          selected: active,
+                          selectedColor: Colors.white,
+                          backgroundColor: const Color(0xFF2C2C2C),
+                          labelStyle: TextStyle(
+                            color: active ? Colors.black : Colors.white,
+                            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                            fontSize: 12.5,
+                          ),
+                          onSelected: (_) {
+                            _yearInputCtrl.clear();
+                            setState(() {
+                              period = p.$1;
+                              currentPage = 1;
+                            });
+                            setModalState(() {});
+                            _fetchVideos();
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Tampil per Tab (Permanen):',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      children: [25, 50, 100].map((val) {
+                        final active = limit == val;
+                        return ChoiceChip(
+                          label: Text('$val Video'),
+                          selected: active,
+                          selectedColor: const Color(0xFFFF0033),
+                          backgroundColor: const Color(0xFF2C2C2C),
+                          labelStyle: TextStyle(
+                            color: Colors.white,
+                            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                            fontSize: 12.5,
+                          ),
+                          onSelected: (_) {
+                            setState(() {
+                              limit = val;
+                              currentPage = 1;
+                            });
+                            setModalState(() {});
+                            _saveUiPreferences(newLimit: val);
+                            _fetchVideos();
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Filter Durasi Video:',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.white70,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          '${_formatMinutesLabel(durationRange.start.round())} – ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}',
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            color: Colors.amberAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    RangeSlider(
+                      values: durationRange,
+                      min: 0,
+                      max: 120,
+                      divisions: 120,
+                      activeColor: const Color(0xFFFF0033),
+                      inactiveColor: const Color(0xFF444444),
+                      onChanged: (vals) {
+                        setState(() => durationRange = vals);
+                        setModalState(() {});
+                      },
+                      onChangeEnd: (vals) {
+                        setState(() {
+                          durationRange = vals;
+                          currentPage = 1;
+                        });
+                        _saveUiPreferences();
+                        _fetchVideos();
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF0033),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text(
+                          'Terapkan (Total $totalVideos Video)',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildMobileQuickControlBar() {
     String activeChannelName = 'Pilih Channel (${channels.length})';
     if (selectedChannelId.isNotEmpty) {
@@ -3236,22 +3646,19 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         }
       }
     }
-    final isSidebarOpen = sidebarMode == 'full';
 
     return Container(
       color: const Color(0xFF0F0F0F),
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
       child: Row(
         children: [
-          // Tombol Besar Kiri: Buka / Tutup Daftar Channel (Subscriptions)
+          // Tombol Besar Kiri: Buka Drawer Channel
           Expanded(
             child: SizedBox(
-              height: 42,
+              height: 40,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isSidebarOpen
-                      ? const Color(0xFFFF0033)
-                      : selectedChannelId.isNotEmpty
+                  backgroundColor: selectedChannelId.isNotEmpty
                       ? const Color(0xFF1E3A2F)
                       : const Color(0xFF222222),
                   foregroundColor: Colors.white,
@@ -3260,41 +3667,41 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                     side: BorderSide(
-                      color: isSidebarOpen
-                          ? const Color(0xFFFF4E4E)
-                          : selectedChannelId.isNotEmpty
+                      color: selectedChannelId.isNotEmpty
                           ? const Color(0xFF2E7D32)
                           : const Color(0xFF3A3A3A),
                     ),
                   ),
                 ),
                 icon: Icon(
-                  isSidebarOpen ? Icons.close : Icons.subscriptions_outlined,
-                  size: 18,
-                  color: isSidebarOpen ? Colors.white : Colors.redAccent,
+                  selectedChannelId.isNotEmpty
+                      ? Icons.check_circle
+                      : Icons.subscriptions_outlined,
+                  size: 17,
+                  color: selectedChannelId.isNotEmpty
+                      ? Colors.lightGreenAccent
+                      : Colors.redAccent,
                 ),
                 label: Text(
-                  isSidebarOpen ? 'Tutup Channel' : activeChannelName,
+                  activeChannelName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 onPressed: () {
-                  final next = sidebarMode == 'full' ? 'hidden' : 'full';
-                  setState(() => sidebarMode = next);
-                  _saveUiPreferences(newSidebarMode: next);
+                  _scaffoldKey.currentState?.openDrawer();
                 },
               ),
             ),
           ),
-          // Tombol cepat kembali ke Semua Follower jika sedang memilih 1 channel atau mencari teks
+          // Tombol Reset ke Semua Channel jika channel sedang dipilih
           if (selectedChannelId.isNotEmpty || searchQuery.isNotEmpty) ...[
             const SizedBox(width: 6),
             SizedBox(
-              height: 42,
+              height: 40,
               child: OutlinedButton(
                 style: OutlinedButton.styleFrom(
                   backgroundColor: const Color(0xFF222222),
@@ -3308,60 +3715,130 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 onPressed: () => _selectChannelTab(''),
                 child: const Icon(
                   Icons.home_filled,
-                  size: 19,
+                  size: 18,
                   color: Colors.white,
                 ),
               ),
             ),
           ],
           const SizedBox(width: 8),
-          // Tombol Besar Kanan: Buka Filter / Tutup Filter (Selalu diam di tempat, mudah ditekan jempol)
+          // Tombol Besar Kanan: Buka Filter Bottom Sheet
           Expanded(
             child: SizedBox(
-              height: 42,
+              height: 40,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: filterMinimized
-                      ? const Color(0xFF222222)
-                      : const Color(0xFF332610),
+                  backgroundColor: const Color(0xFF222222),
                   foregroundColor: Colors.amberAccent,
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
-                    side: BorderSide(
-                      color: filterMinimized
-                          ? const Color(0xFF3A3A3A)
-                          : Colors.amberAccent,
-                    ),
+                    side: const BorderSide(color: Color(0xFF3A3A3A)),
                   ),
                 ),
-                icon: Icon(
-                  filterMinimized
-                      ? Icons.tune
-                      : Icons.keyboard_arrow_up_rounded,
-                  size: 19,
+                icon: const Icon(
+                  Icons.tune,
+                  size: 18,
                   color: Colors.amberAccent,
                 ),
-                label: Text(
-                  filterMinimized ? 'Buka Filter' : 'Tutup Filter',
+                label: const Text(
+                  'Filter & Urutkan',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
+                  style: TextStyle(
+                    fontSize: 12.5,
                     fontWeight: FontWeight.bold,
                     color: Colors.amberAccent,
                   ),
                 ),
-                onPressed: () {
-                  final next = !filterMinimized;
-                  setState(() => filterMinimized = next);
-                  _saveUiPreferences(newFilterMinimized: next);
-                },
+                onPressed: _showMobileFilterBottomSheet,
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMobileActiveFilterBar() {
+    return Container(
+      color: const Color(0xFF0F0F0F),
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            // CHIP WILAYAH: [🌐 Semua] [🇮🇩 Nasional] [🌍 Internasional] LANGSUNG DI LAYAR!
+            ...[
+              ('all', '🌐 Semua'),
+              ('Nasional', '🇮🇩 Nasional'),
+              ('Internasional', '🌍 Internasional'),
+            ].map((reg) {
+              final active = selectedRegion == reg.$1;
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(reg.$2),
+                  selected: active,
+                  selectedColor: reg.$1 == 'Nasional'
+                      ? const Color(0xFFD32F2F)
+                      : (reg.$1 == 'Internasional'
+                          ? const Color(0xFF1976D2)
+                          : Colors.white),
+                  backgroundColor: const Color(0xFF222222),
+                  labelStyle: TextStyle(
+                    color: active
+                        ? (reg.$1 == 'all' ? Colors.black : Colors.white)
+                        : Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11.5,
+                  ),
+                  onSelected: (_) {
+                    setState(() {
+                      selectedRegion = reg.$1;
+                      currentPage = 1;
+                    });
+                    _saveUiPreferences();
+                    _fetchVideos();
+                  },
+                ),
+              );
+            }),
+            const SizedBox(width: 4),
+            // Tombol Urutan aktif
+            ActionChip(
+              backgroundColor: const Color(0xFF222222),
+              side: const BorderSide(color: Color(0xFF383838)),
+              label: Text(
+                sortBy == 'views'
+                    ? '🔥 View'
+                    : (sortBy == 'likes' ? '👍 Like' : '🕒 Waktu'),
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              onPressed: _showMobileFilterBottomSheet,
+            ),
+            const SizedBox(width: 6),
+            ActionChip(
+              backgroundColor: const Color(0xFF222222),
+              side: const BorderSide(color: Color(0xFF383838)),
+              label: Text(
+                '$limit Video',
+                style: const TextStyle(fontSize: 11.5, color: Colors.white70),
+              ),
+              onPressed: _showMobileFilterBottomSheet,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Total: $totalVideos',
+              style: const TextStyle(fontSize: 11, color: Colors.white38),
+            ),
+          ],
+        ),
       ),
     );
   }
