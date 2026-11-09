@@ -1365,16 +1365,85 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   void _selectChannelTab(String cid) {
     final tabKey = cid.isEmpty ? 'home' : cid;
     final savedLimit = tabLimits[tabKey] ?? defaultLimit;
+    final isMobileScreen = MediaQuery.of(context).size.width < 750;
     setState(() {
       selectedChannelId = cid;
       if (cid.isEmpty) {
         _searchCtrl.clear();
         searchQuery = '';
       }
+      if (isMobileScreen && sidebarMode == 'full') {
+        sidebarMode = 'hidden';
+      }
       limit = (savedLimit == 25 || savedLimit == 50 || savedLimit == 100) ? savedLimit : 25;
       currentPage = 1;
     });
     _fetchVideos();
+  }
+
+  Widget _buildSearchInputBox({double height = 40, EdgeInsetsGeometry? margin}) {
+    return Container(
+      height: height,
+      margin: margin,
+      decoration: BoxDecoration(
+        color: const Color(0xFF121212),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF303030)),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 14),
+          Expanded(
+            child: TextField(
+              controller: _searchCtrl,
+              style: const TextStyle(fontSize: 14),
+              decoration: const InputDecoration(
+                hintText: 'Cari video dari follower/subscriptions...',
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onSubmitted: (val) {
+                setState(() {
+                  searchQuery = val;
+                  currentPage = 1;
+                });
+                _fetchVideos();
+              },
+            ),
+          ),
+          if (searchQuery.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.clear, size: 18),
+              onPressed: () {
+                _searchCtrl.clear();
+                setState(() {
+                  searchQuery = '';
+                  currentPage = 1;
+                });
+                _fetchVideos();
+              },
+            ),
+          Container(
+            width: 44,
+            height: height,
+            decoration: const BoxDecoration(
+              color: Color(0xFF222222),
+              borderRadius: BorderRadius.horizontal(right: Radius.circular(24)),
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.search, size: 19),
+              onPressed: () {
+                setState(() {
+                  searchQuery = _searchCtrl.text;
+                  currentPage = 1;
+                });
+                _fetchVideos();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1385,213 +1454,203 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
     return Scaffold(
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(60),
+        preferredSize: Size.fromHeight(isMobile ? 104 : 60),
         child: Material(
           color: const Color(0xFF0F0F0F),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             child: SafeArea(
-              child: Row(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  IconButton(
-                    tooltip: 'Ubah Ukuran Sidebar (Penuh / Mini Ikon / Sembunyi)',
-                    icon: const Icon(Icons.menu, color: Colors.white),
-                    onPressed: _cycleSidebarMode,
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF0033),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
-                  ),
-                  const SizedBox(width: 8),
-                  if (!isCompactHeader)
-                    const Padding(
-                      padding: EdgeInsets.only(right: 12),
-                      child: Text(
-                        'YouTube Follower',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: -0.5),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Ubah Ukuran Sidebar (Penuh / Mini Ikon / Sembunyi)',
+                        icon: const Icon(Icons.menu, color: Colors.white),
+                        visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                        onPressed: _cycleSidebarMode,
                       ),
-                    ),
-                  Expanded(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 480),
-                      child: Container(
-                        height: 40,
-                        margin: const EdgeInsets.symmetric(horizontal: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF121212),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: const Color(0xFF303030)),
+                          color: const Color(0xFFFF0033),
+                          borderRadius: BorderRadius.circular(6),
                         ),
-                        child: Row(
-                          children: [
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: TextField(
-                                controller: _searchCtrl,
-                                style: const TextStyle(fontSize: 14),
-                                decoration: const InputDecoration(
-                                  hintText: 'Cari video dari follower/subscriptions...',
-                                  border: InputBorder.none,
-                                  isDense: true,
-                                ),
-                                onSubmitted: (val) {
-                                  setState(() {
-                                    searchQuery = val;
-                                    currentPage = 1;
-                                  });
-                                  _fetchVideos();
-                                },
-                              ),
-                            ),
-                            if (searchQuery.isNotEmpty)
-                              IconButton(
-                                icon: const Icon(Icons.clear, size: 18),
-                                onPressed: () {
-                                  _searchCtrl.clear();
-                                  setState(() {
-                                    searchQuery = '';
-                                    currentPage = 1;
-                                  });
-                                  _fetchVideos();
-                                },
-                              ),
-                            Container(
-                              width: 48,
-                              height: 40,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF222222),
-                                borderRadius: BorderRadius.horizontal(right: Radius.circular(24)),
-                              ),
-                              child: IconButton(
-                                icon: const Icon(Icons.search, size: 20),
-                                onPressed: () {
-                                  setState(() {
-                                    searchQuery = _searchCtrl.text;
-                                    currentPage = 1;
-                                  });
-                                  _fetchVideos();
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
+                        child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
                       ),
-                    ),
-                  ),
-                  // Tombol khusus Refresh YouTube (Merah = Belum Refresh, Lingkaran Muter + % = Loading Background, Hijau = 100% Selesai & Klik untuk Tampilkan Video Baru)
-                  ElevatedButton.icon(
-                    onPressed: _manualRefreshYouTube,
-                    icon: refreshingYouTube
-                        ? SizedBox(
-                            width: 28,
-                            height: 28,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                const SizedBox(
-                                  width: 26,
-                                  height: 26,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.4,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                Text(
-                                  '$refreshProgress%',
-                                  style: const TextStyle(
-                                    fontSize: 8.5,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : Icon(
-                            refreshReadyGreen ? Icons.check_circle : Icons.refresh,
-                            size: 18,
+                      const SizedBox(width: 8),
+                      if (!isCompactHeader)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 12),
+                          child: Text(
+                            'YouTube Follower',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: -0.5),
                           ),
-                    label: Text(
-                      refreshingYouTube
-                          ? (screenWidth < 600 ? '$refreshProgress%' : 'Sync $refreshProgress%')
-                          : refreshReadyGreen
-                              ? (screenWidth < 600 ? '100% Siap' : 'Refresh YouTube (100%)')
-                              : (screenWidth < 600 ? 'Refresh' : 'Refresh YouTube'),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: refreshReadyGreen
-                          ? const Color(0xFF2E7D32) // HIJAU saat 100% selesai sync
-                          : const Color(0xFFFF0033), // MERAH saat belum refresh / sedang berjalan
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  if (!isCompactHeader) ...[
-                    OutlinedButton.icon(
-                      onPressed: _exportExcelCsv,
-                      icon: const Icon(Icons.table_view, size: 18, color: Colors.greenAccent),
-                      label: const Text('Export Excel/CSV', style: TextStyle(color: Colors.white)),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFF303030)),
-                        backgroundColor: const Color(0xFF222222),
+                        ),
+                      if (!isMobile)
+                        Expanded(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 480),
+                            child: _buildSearchInputBox(
+                              height: 40,
+                              margin: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                          ),
+                        )
+                      else
+                        const Spacer(),
+                      // Tombol khusus Refresh YouTube (Merah = Belum Refresh, Lingkaran Muter + % = Loading Background, Hijau = 100% Selesai & Klik untuk Tampilkan Video Baru)
+                      ElevatedButton.icon(
+                        onPressed: _manualRefreshYouTube,
+                        icon: refreshingYouTube
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.2,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    Text(
+                                      '$refreshProgress%',
+                                      style: const TextStyle(
+                                        fontSize: 7.5,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : Icon(
+                                refreshReadyGreen ? Icons.check_circle : Icons.refresh,
+                                size: 17,
+                              ),
+                        label: Text(
+                          refreshingYouTube
+                              ? (screenWidth < 600 ? '$refreshProgress%' : 'Sync $refreshProgress%')
+                              : refreshReadyGreen
+                                  ? (screenWidth < 600 ? '100% Siap' : 'Refresh YouTube (100%)')
+                                  : (screenWidth < 600 ? 'Refresh' : 'Refresh YouTube'),
+                          style: TextStyle(fontSize: isMobile ? 12.5 : 13.5),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: refreshReadyGreen
+                              ? const Color(0xFF2E7D32) // HIJAU saat 100% selesai sync
+                              : const Color(0xFFFF0033), // MERAH saat belum refresh / sedang berjalan
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 12, vertical: 8),
+                          visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                  ] else
-                    IconButton(
-                      tooltip: 'Export Excel/CSV',
-                      onPressed: _exportExcelCsv,
-                      icon: const Icon(Icons.table_view, color: Colors.greenAccent),
-                    ),
-                  ElevatedButton.icon(
-                    onPressed: _showAddChannelModal,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(isCompactHeader ? 'Channel' : 'Tambah Channel'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF272727),
-                      foregroundColor: Colors.white,
-                    ),
+                      SizedBox(width: isMobile ? 2 : 6),
+                      if (!isCompactHeader) ...[
+                        OutlinedButton.icon(
+                          onPressed: _exportExcelCsv,
+                          icon: const Icon(Icons.table_view, size: 18, color: Colors.greenAccent),
+                          label: const Text('Export Excel/CSV', style: TextStyle(color: Colors.white)),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFF303030)),
+                            backgroundColor: const Color(0xFF222222),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ] else
+                        IconButton(
+                          tooltip: 'Export Excel/CSV',
+                          visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                          onPressed: _exportExcelCsv,
+                          icon: const Icon(Icons.table_view, color: Colors.greenAccent, size: 20),
+                        ),
+                      if (!isMobile)
+                        ElevatedButton.icon(
+                          onPressed: _showAddChannelModal,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: Text(isCompactHeader ? 'Channel' : 'Tambah Channel'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF272727),
+                            foregroundColor: Colors.white,
+                          ),
+                        )
+                      else
+                        IconButton(
+                          tooltip: 'Tambah Channel',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _showAddChannelModal,
+                          icon: const Icon(Icons.person_add_alt_1, color: Colors.white, size: 20),
+                        ),
+                      IconButton(
+                        tooltip: 'Pengaturan API & Sync',
+                        visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                        onPressed: _showApiSettingsModal,
+                        icon: Icon(
+                          Icons.settings,
+                          size: isMobile ? 20 : 22,
+                          color: hasApiKey ? Colors.greenAccent : Colors.amberAccent,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: 'Pengaturan API & Sync',
-                    onPressed: _showApiSettingsModal,
-                    icon: Icon(
-                      Icons.settings,
-                      color: hasApiKey ? Colors.greenAccent : Colors.amberAccent,
-                    ),
-                  ),
+                  if (isMobile) ...[
+                    const SizedBox(height: 4),
+                    _buildSearchInputBox(height: 36),
+                  ],
                 ],
               ),
             ),
           ),
         ),
       ),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      body: Stack(
         children: [
-          if (sidebarMode != 'hidden') _buildSidebar(isNarrow: isMobile),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildFilterAndSortHeader(isMobile),
-                Expanded(
-                  child: loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : LayoutBuilder(
-                          builder: (ctx, constraints) =>
-                              _buildVideoGridWithPagination(constraints.maxWidth),
-                        ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (sidebarMode == 'mini' || (sidebarMode == 'full' && !isMobile))
+                _buildSidebar(isNarrow: isMobile),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildFilterAndSortHeader(isMobile),
+                    Expanded(
+                      child: loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : LayoutBuilder(
+                              builder: (ctx, constraints) =>
+                                  _buildVideoGridWithPagination(constraints.maxWidth),
+                            ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          // Di layar HP / jendela sempit, mode 'full' tampil sebagai panel overlay di atas kiri agar tidak menjepit daftar video
+          if (isMobile && sidebarMode == 'full') ...[
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => sidebarMode = 'hidden');
+                  _saveUiPreferences(newSidebarMode: 'hidden');
+                },
+                child: Container(color: Colors.black54),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: _buildSidebar(isNarrow: false),
+            ),
+          ],
         ],
       ),
     );
@@ -1904,186 +1963,216 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       );
     }
 
+    final row1Children = <Widget>[
+      const Text(
+        'Urutkan:',
+        style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
+      ),
+      ...sorts.map((s) {
+        final active = sortBy == s.$1;
+        return ChoiceChip(
+          label: Text(s.$2),
+          selected: active,
+          selectedColor: Colors.white,
+          backgroundColor: const Color(0xFF272727),
+          labelStyle: TextStyle(
+            color: active ? Colors.black : Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+          onSelected: (_) {
+            setState(() {
+              sortBy = s.$1;
+              currentPage = 1;
+            });
+            _fetchVideos();
+          },
+        );
+      }),
+      const SizedBox(width: 8),
+      const Text(
+        'Tampil per Tab (Permanen):',
+        style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
+      ),
+      ...[25, 50, 100].map((val) {
+        final active = limit == val;
+        return ChoiceChip(
+          label: Text('$val Video'),
+          selected: active,
+          selectedColor: const Color(0xFFFF0033),
+          backgroundColor: const Color(0xFF272727),
+          labelStyle: TextStyle(
+            color: Colors.white,
+            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+            fontSize: 12.5,
+          ),
+          onSelected: (_) {
+            setState(() {
+              limit = val;
+              currentPage = 1;
+            });
+            _saveUiPreferences(newLimit: val);
+            _fetchVideos();
+          },
+        );
+      }),
+      Padding(
+        padding: const EdgeInsets.only(left: 8),
+        child: Text(
+          'Total: $totalVideos video',
+          style: const TextStyle(fontSize: 12.5, color: Colors.white54),
+        ),
+      ),
+      OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          side: const BorderSide(color: Color(0xFF383838)),
+        ),
+        icon: const Icon(Icons.expand_less, size: 16, color: Colors.amberAccent),
+        label: const Text('Minimal', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
+        onPressed: () {
+          setState(() => filterMinimized = true);
+          _saveUiPreferences(newFilterMinimized: true);
+        },
+      ),
+    ];
+
+    final row2Children = <Widget>[
+      ...periods.map((p) {
+        final active = period == p.$1;
+        return ChoiceChip(
+          label: Text(p.$2),
+          selected: active,
+          selectedColor: Colors.white,
+          backgroundColor: const Color(0xFF272727),
+          labelStyle: TextStyle(
+            color: active ? Colors.black : Colors.white,
+            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+            fontSize: 13,
+          ),
+          onSelected: (_) {
+            _yearInputCtrl.clear();
+            setState(() {
+              period = p.$1;
+              currentPage = 1;
+            });
+            _fetchVideos();
+          },
+        );
+      }),
+      // Input Angka Tahun Lalu (misal ketik 3 = 3 Tahun Lalu)
+      Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: isCustomYear ? const Color(0xFF3A1818) : const Color(0xFF272727),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isCustomYear ? const Color(0xFFFF0033) : const Color(0xFF444444),
+            width: isCustomYear ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 44,
+              child: TextField(
+                controller: _yearInputCtrl,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                decoration: const InputDecoration(
+                  hintText: '2, 3..',
+                  hintStyle: TextStyle(fontSize: 12, color: Colors.white38),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 6),
+                ),
+                onChanged: (val) {
+                  final trimmed = val.trim();
+                  final parsed = int.tryParse(trimmed);
+                  if (parsed != null && parsed >= 1) {
+                    setState(() {
+                      period = '${parsed}y';
+                      currentPage = 1;
+                    });
+                    _fetchVideos();
+                  } else if (trimmed.isEmpty && isCustomYear) {
+                    setState(() {
+                      period = 'all';
+                      currentPage = 1;
+                    });
+                    _fetchVideos();
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Tahun Lalu',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isCustomYear ? FontWeight.bold : FontWeight.normal,
+                color: isCustomYear ? Colors.white : Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
+
     return Container(
       color: const Color(0xFF0F0F0F),
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      padding: EdgeInsets.fromLTRB(isMobile ? 10 : 16, 4, isMobile ? 10 : 16, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              const Text(
-                'Urutkan:',
-                style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
-              ),
-              ...sorts.map((s) {
-                final active = sortBy == s.$1;
-                return ChoiceChip(
-                  label: Text(s.$2),
-                  selected: active,
-                  selectedColor: Colors.white,
-                  backgroundColor: const Color(0xFF272727),
-                  labelStyle: TextStyle(
-                    color: active ? Colors.black : Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                  onSelected: (_) {
-                    setState(() {
-                      sortBy = s.$1;
-                      currentPage = 1;
-                    });
-                    _fetchVideos();
-                  },
-                );
-              }),
-              const SizedBox(width: 12),
-              const Text(
-                'Tampil per Tab (Permanen):',
-                style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
-              ),
-              ...[25, 50, 100].map((val) {
-                final active = limit == val;
-                return ChoiceChip(
-                  label: Text('$val Video'),
-                  selected: active,
-                  selectedColor: const Color(0xFFFF0033),
-                  backgroundColor: const Color(0xFF272727),
-                  labelStyle: TextStyle(
-                    color: Colors.white,
-                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                    fontSize: 12.5,
-                  ),
-                  onSelected: (_) {
-                    setState(() {
-                      limit = val;
-                      currentPage = 1;
-                    });
-                    _saveUiPreferences(newLimit: val);
-                    _fetchVideos();
-                  },
-                );
-              }),
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(
-                  'Total: $totalVideos video',
-                  style: const TextStyle(fontSize: 12.5, color: Colors.white54),
-                ),
-              ),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  side: const BorderSide(color: Color(0xFF383838)),
-                ),
-                icon: const Icon(Icons.expand_less, size: 16, color: Colors.amberAccent),
-                label: const Text('Minimal', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
-                onPressed: () {
-                  setState(() => filterMinimized = true);
-                  _saveUiPreferences(newFilterMinimized: true);
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              ...periods.map((p) {
-                final active = period == p.$1;
-                return ChoiceChip(
-                  label: Text(p.$2),
-                  selected: active,
-                  selectedColor: Colors.white,
-                  backgroundColor: const Color(0xFF272727),
-                  labelStyle: TextStyle(
-                    color: active ? Colors.black : Colors.white,
-                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                    fontSize: 13,
-                  ),
-                  onSelected: (_) {
-                    _yearInputCtrl.clear();
-                    setState(() {
-                      period = p.$1;
-                      currentPage = 1;
-                    });
-                    _fetchVideos();
-                  },
-                );
-              }),
-              // Input Angka Tahun Lalu (misal ketik 3 = 3 Tahun Lalu)
-              Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: isCustomYear ? const Color(0xFF3A1818) : const Color(0xFF272727),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isCustomYear ? const Color(0xFFFF0033) : const Color(0xFF444444),
-                    width: isCustomYear ? 1.5 : 1.0,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 44,
-                      child: TextField(
-                        controller: _yearInputCtrl,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                        decoration: const InputDecoration(
-                          hintText: '2, 3..',
-                          hintStyle: TextStyle(fontSize: 12, color: Colors.white38),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(vertical: 6),
-                        ),
-                        onChanged: (val) {
-                          final trimmed = val.trim();
-                          final parsed = int.tryParse(trimmed);
-                          if (parsed != null && parsed >= 1) {
-                            setState(() {
-                              period = '${parsed}y';
-                              currentPage = 1;
-                            });
-                            _fetchVideos();
-                          } else if (trimmed.isEmpty && isCustomYear) {
-                            setState(() {
-                              period = 'all';
-                              currentPage = 1;
-                            });
-                            _fetchVideos();
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Tahun Lalu',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: isCustomYear ? FontWeight.bold : FontWeight.normal,
-                        color: isCustomYear ? Colors.white : Colors.white70,
-                      ),
-                    ),
+          if (isMobile)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < row1Children.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    row1Children[i],
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: row1Children,
+            ),
+          const SizedBox(height: 6),
+          if (isMobile)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < row2Children.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    row2Children[i],
+                  ],
+                ],
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: row2Children,
+            ),
+          const SizedBox(height: 6),
           // Baris 3: Garis Slider 2 Lingkaran Filter Durasi Video (0/1 Menit s/d 2 Jam, geser per 1 menit)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
