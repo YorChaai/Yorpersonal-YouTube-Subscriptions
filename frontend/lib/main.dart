@@ -68,6 +68,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   String apiKeyPreview = '';
   String localApiKey = '';
   String localOauthToken = '';
+  String localMyChannelId = '';
+  bool _bundledDataLoaded = false;
+  final Set<String> _localUnsubscribedIds = {};
 
   // Database lokal mandiri di dalam aplikasi (untuk jalan sendiri di HP tanpa Python backend)
   final List<Map<String, dynamic>> _localChannels = [];
@@ -184,22 +187,59 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     }
   }
 
+  Future<void> _loadBundledInitialDataIfNeeded() async {
+    if (_bundledDataLoaded) return;
+    _bundledDataLoaded = true;
+    if (WidgetsBinding.instance.runtimeType.toString().contains('Test')) return;
+    try {
+      final rawJson = await rootBundle.loadString('assets/initial_data.json');
+      if (rawJson.isNotEmpty) {
+        final parsed = jsonDecode(rawJson) as Map<String, dynamic>;
+        final bundledKey = (parsed['api_key'] ?? '').toString();
+        final bundledCid = (parsed['my_channel_id'] ?? '').toString();
+        final bundledChs = (parsed['channels'] as List?) ?? [];
+        final bundledVids = (parsed['videos'] as List?) ?? [];
+        if (bundledChs.isNotEmpty) {
+          _localChannels
+            ..clear()
+            ..addAll(bundledChs.map((e) => Map<String, dynamic>.from(e as Map)));
+          _sortChannelsByWatchedDesc(_localChannels);
+        }
+        if (bundledVids.isNotEmpty) {
+          _localVideos
+            ..clear()
+            ..addAll(bundledVids.map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+        if (bundledKey.isNotEmpty) {
+          localApiKey = bundledKey;
+          hasApiKey = true;
+          apiKeyPreview = bundledKey.length > 8
+              ? '${bundledKey.substring(0, 6)}...${bundledKey.substring(bundledKey.length - 4)}'
+              : 'Terpasang';
+        }
+        if (bundledCid.isNotEmpty) {
+          localMyChannelId = bundledCid;
+        }
+      }
+    } catch (_) {}
+  }
+
   void _applyLocalFilterAndPagination() {
     final now = DateTime.now().toUtc();
-    DateTime? startDt;
-    DateTime? endDt;
+    String? startIso;
+    String? endIso;
     if (period == 'week') {
-      startDt = now.subtract(const Duration(days: 7));
+      startIso = now.subtract(const Duration(days: 7)).toIso8601String();
     } else if (period == 'month') {
-      startDt = now.subtract(const Duration(days: 30));
+      startIso = now.subtract(const Duration(days: 30)).toIso8601String();
     } else if (period == 'year') {
-      startDt = now.subtract(const Duration(days: 365));
+      startIso = now.subtract(const Duration(days: 365)).toIso8601String();
     } else if (period.endsWith('y') && int.tryParse(period.substring(0, period.length - 1)) != null) {
       final yrs = int.parse(period.substring(0, period.length - 1));
       if (yrs >= 1) {
-        startDt = now.subtract(Duration(days: 365 * yrs));
+        startIso = now.subtract(Duration(days: 365 * yrs)).toIso8601String();
         if (yrs > 1) {
-          endDt = now.subtract(Duration(days: 365 * (yrs - 1)));
+          endIso = now.subtract(Duration(days: 365 * (yrs - 1))).toIso8601String();
         }
       }
     }
@@ -212,7 +252,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         return false;
       }
       if (minSec > 0 || durationRange.end.round() < 120) {
-        final durSec = _durationToSeconds((v['duration'] ?? '').toString());
+        final durSec = (v['duration_seconds'] as int?) ?? _durationToSeconds((v['duration'] ?? '').toString());
         if (minSec > 0 && durSec < minSec) return false;
         if (durationRange.end.round() < 120 && durSec > maxSec) return false;
       }
@@ -221,11 +261,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         final ct = (v['channel_title'] ?? '').toString().toLowerCase();
         if (!t.contains(qLower) && !ct.contains(qLower)) return false;
       }
-      if (startDt != null || endDt != null) {
-        final pub = DateTime.tryParse((v['published_at'] ?? '').toString())?.toUtc();
-        if (pub == null) return false;
-        if (startDt != null && pub.isBefore(startDt)) return false;
-        if (endDt != null && !pub.isBefore(endDt)) return false;
+      if (startIso != null || endIso != null) {
+        final pubStr = (v['published_at'] ?? '').toString();
+        if (pubStr.isEmpty) return false;
+        if (startIso != null && pubStr.compareTo(startIso) < 0) return false;
+        if (endIso != null && pubStr.compareTo(endIso) >= 0) return false;
       }
       return true;
     }).toList();
@@ -238,12 +278,6 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       }
       return (b['published_at'] ?? '').toString().compareTo((a['published_at'] ?? '').toString());
     });
-
-    // Recalculate channel counts
-    for (final ch in _localChannels) {
-      final cid = ch['channel_id'];
-      ch['video_count'] = _localVideos.where((v) => v['channel_id'] == cid).length;
-    }
 
     final total = filtered.length;
     final pages = total == 0 ? 1 : ((total + limit - 1) ~/ limit);
@@ -264,6 +298,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
   Future<void> _restoreSessionAndFetch() async {
     setState(() => loading = true);
+    await _loadBundledInitialDataIfNeeded();
     try {
       http.Response? stateRes;
       final candidates = <String>{
@@ -478,18 +513,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         if (localApiKey.isEmpty) {
           throw Exception('Masukkan API Key terlebih dahulu di menu ⚙️.');
         }
-        final targetChs = _localChannels
-            .where((ch) => !(ch['channel_id'] ?? '').toString().startsWith('UC_demo_'))
-            .toList();
         final beforeCount = _localVideos.length;
-        for (var i = 0; i < targetChs.length; i++) {
-          final cid = (targetChs[i]['channel_id'] ?? '').toString();
-          await _standaloneAddAndSyncChannel(cid);
-          if (!mounted) return;
-          setState(() {
-            refreshProgress = ((i + 1) * 100 ~/ (targetChs.isEmpty ? 1 : targetChs.length)).clamp(5, 99);
-          });
+        // 1. Cek daftar Subscriptions terbaru via Channel ID user + API Key
+        if (localMyChannelId.isNotEmpty && selectedChannelId.isEmpty) {
+          await _standaloneSyncSubscriptionsByMyChannel();
         }
+        final targetChs = _localChannels
+            .where((ch) =>
+                !(ch['channel_id'] ?? '').toString().startsWith('UC_demo_') &&
+                (selectedChannelId.isEmpty || ch['channel_id'] == selectedChannelId))
+            .toList();
+        await _standaloneFastRefreshChannels(targetChs);
         if (!mounted) return;
         setState(() {
           refreshingYouTube = false;
@@ -572,6 +606,132 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     }
     if (!mounted) return;
     _applyLocalFilterAndPagination();
+  }
+
+  Future<void> _standaloneSyncSubscriptionsByMyChannel() async {
+    if (localMyChannelId.isEmpty || localApiKey.isEmpty) return;
+    try {
+      final existingCids = _localChannels.map((c) => (c['channel_id'] ?? '').toString()).toSet();
+      String? pageToken;
+      for (var page = 0; page < 25; page++) {
+        final params = <String, String>{
+          'part': 'snippet',
+          'channelId': localMyChannelId,
+          'maxResults': '50',
+          'order': 'alphabetical',
+          'key': localApiKey,
+        };
+        if (pageToken != null && pageToken.isNotEmpty) {
+          params['pageToken'] = pageToken;
+        }
+        final uri = Uri.https('www.googleapis.com', '/youtube/v3/subscriptions', params);
+        final res = await http.get(uri).timeout(const Duration(seconds: 8));
+        if (res.statusCode != 200) break;
+        final data = jsonDecode(res.body);
+        final items = (data['items'] as List?) ?? [];
+        for (final item in items) {
+          final snip = item['snippet'] ?? {};
+          final cid = (snip['resourceId']?['channelId'] ?? '').toString();
+          if (cid.isEmpty || existingCids.contains(cid) || _localUnsubscribedIds.contains(cid)) continue;
+          final title = (snip['title'] ?? cid).toString();
+          final thumb = (snip['thumbnails']?['default']?['url'] ?? '').toString();
+          _localChannels.add({
+            'channel_id': cid,
+            'title': title,
+            'handle': '',
+            'thumbnail_url': thumb,
+            'uploads_playlist_id': cid.startsWith('UC') ? 'UU${cid.substring(2)}' : cid,
+            'source': 'subscriptions',
+            'video_count': 0,
+            'watched_count': 0,
+          });
+          existingCids.add(cid);
+        }
+        pageToken = data['nextPageToken']?.toString();
+        if (pageToken == null || pageToken.isEmpty) break;
+      }
+      _sortChannelsByWatchedDesc(_localChannels);
+    } catch (_) {}
+  }
+
+  Future<void> _standaloneFastRefreshChannels(List<Map<String, dynamic>> targetChs) async {
+    if (targetChs.isEmpty) return;
+    final existingVidIds = _localVideos.map((v) => (v['video_id'] ?? '').toString()).toSet();
+    final newVidMeta = <String, Map<String, String>>{};
+    final vidRegex = RegExp(r'<yt:videoId>([^<]+)</yt:videoId>');
+
+    const batchSize = 35;
+    for (var i = 0; i < targetChs.length; i += batchSize) {
+      final chunk = targetChs.sublist(i, (i + batchSize > targetChs.length) ? targetChs.length : i + batchSize);
+      await Future.wait(chunk.map((ch) async {
+        final cid = (ch['channel_id'] ?? '').toString();
+        if (!cid.startsWith('UC')) return;
+        try {
+          final feedUri = Uri.parse('https://www.youtube.com/feeds/videos.xml?channel_id=$cid');
+          final res = await http.get(feedUri).timeout(const Duration(seconds: 5));
+          if (res.statusCode == 200) {
+            final matches = vidRegex.allMatches(res.body);
+            for (final m in matches) {
+              final vid = (m.group(1) ?? '').trim();
+              if (vid.isNotEmpty && !existingVidIds.contains(vid)) {
+                newVidMeta[vid] = {
+                  'channel_id': cid,
+                  'channel_title': (ch['title'] ?? '').toString(),
+                  'channel_thumbnail': (ch['thumbnail_url'] ?? '').toString(),
+                };
+              }
+            }
+          }
+        } catch (_) {}
+      }));
+      if (!mounted) return;
+      setState(() {
+        refreshProgress = ((i + chunk.length) * 90 ~/ targetChs.length).clamp(5, 92);
+      });
+    }
+
+    final newIds = newVidMeta.keys.toList();
+    for (var i = 0; i < newIds.length; i += 50) {
+      final slice = newIds.sublist(i, (i + 50 > newIds.length) ? newIds.length : i + 50);
+      try {
+        final vUri = Uri.https('www.googleapis.com', '/youtube/v3/videos', {
+          'part': 'snippet,statistics,contentDetails',
+          'id': slice.join(','),
+          'key': localApiKey,
+        });
+        final vRes = await http.get(vUri).timeout(const Duration(seconds: 10));
+        if (vRes.statusCode == 200) {
+          final vData = jsonDecode(vRes.body);
+          final vItems = (vData['items'] as List?) ?? [];
+          for (final v in vItems) {
+            final vid = (v['id'] ?? '').toString();
+            final vsnip = v['snippet'] ?? {};
+            final vstats = v['statistics'] ?? {};
+            final meta = newVidMeta[vid] ?? {};
+            final cid = (vsnip['channelId'] ?? meta['channel_id'] ?? '').toString();
+            final durStr = _parseIsoDuration((v['contentDetails']?['duration'] ?? '').toString());
+            _localVideos.insert(0, {
+              'video_id': vid,
+              'channel_id': cid,
+              'channel_title': (vsnip['channelTitle'] ?? meta['channel_title'] ?? '').toString(),
+              'channel_thumbnail': (meta['channel_thumbnail'] ?? '').toString(),
+              'title': (vsnip['title'] ?? 'Untitled').toString(),
+              'thumbnail_url': (vsnip['thumbnails']?['high']?['url'] ??
+                      vsnip['thumbnails']?['medium']?['url'] ??
+                      'https://i.ytimg.com/vi/$vid/hqdefault.jpg')
+                  .toString(),
+              'published_at': (vsnip['publishedAt'] ?? DateTime.now().toUtc().toIso8601String()).toString(),
+              'view_count': int.tryParse((vstats['viewCount'] ?? '0').toString()) ?? 0,
+              'like_count': int.tryParse((vstats['likeCount'] ?? '0').toString()) ?? 0,
+              'duration': durStr,
+              'duration_seconds': _durationToSeconds(durStr),
+              'watched_count': _getCreatorWatchedCount(cid),
+              'is_demo': 0,
+            });
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   // Fungsi Mandiri (Standalone di HP) untuk langsung memanggil API YouTube tanpa Backend Python
@@ -818,6 +978,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       skipUnsubscribeConfirmUntil != null && DateTime.now().isBefore(skipUnsubscribeConfirmUntil!);
 
   Future<void> _executeUnsubscribe(String channelId, String channelTitle) async {
+    _localUnsubscribedIds.add(channelId);
     // Hapus langsung dari tampilan supaya instan
     setState(() {
       channels.removeWhere((c) => c['channel_id'] == channelId);

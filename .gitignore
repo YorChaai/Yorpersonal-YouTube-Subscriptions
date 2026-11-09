@@ -7,6 +7,7 @@ backend/__pycache__/
 *.db-shm
 .env
 daftar_channel_youtube.csv
+frontend/assets/initial_data.json
 backend/youtube_personal.db
 backend/youtube_personal.db-journal
 backend/youtube_personal.db-wal
