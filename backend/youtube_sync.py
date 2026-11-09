@@ -85,6 +85,9 @@ def resolve_and_add_channel(identifier: str, api_key: str = "", oauth_token: str
         snippet = ch.get("snippet", {})
         title = snippet.get("title", raw)
         handle = snippet.get("customUrl", raw if raw.startswith("@") else "")
+        country = snippet.get("country", "")
+        default_lang = snippet.get("defaultLanguage", "")
+        region = db.classify_region(title, handle, country=country, default_lang=default_lang)
         thumbs = snippet.get("thumbnails", {})
         thumb_url = (thumbs.get("medium") or thumbs.get("default") or {}).get("url", "")
         uploads_pid = (
@@ -99,8 +102,12 @@ def resolve_and_add_channel(identifier: str, api_key: str = "", oauth_token: str
             thumbnail_url=thumb_url,
             uploads_playlist_id=uploads_pid,
             source="manual",
+            region=region,
+            country=country,
+            status="subscribed",
+            force_subscribe=True,
         )
-        return {"channel_id": cid, "title": title, "handle": handle, "uploads_playlist_id": uploads_pid}
+        return {"channel_id": cid, "title": title, "handle": handle, "uploads_playlist_id": uploads_pid, "region": region}
 
 
 def import_oauth_subscriptions(oauth_token: str, mode: str = "subscriptions") -> int:
@@ -110,6 +117,11 @@ def import_oauth_subscriptions(oauth_token: str, mode: str = "subscriptions") ->
     """
     if not oauth_token.strip():
         raise ValueError("OAuth Access Token diperlukan untuk menarik daftar Subscriptions otomatis.")
+
+    unfollowed_map: dict[str, str] = {}
+    with db.get_conn() as conn:
+        for r in conn.execute("SELECT channel_id, COALESCE(updated_at, '') AS updated_at FROM channels WHERE status = 'unfollowed'").fetchall():
+            unfollowed_map[r["channel_id"]] = r["updated_at"]
 
     headers = {"Authorization": f"Bearer {oauth_token.strip()}"}
     added = 0
@@ -132,6 +144,7 @@ def import_oauth_subscriptions(oauth_token: str, mode: str = "subscriptions") ->
 
             for item in data.get("items", []):
                 snippet = item.get("snippet", {})
+                sub_pub = snippet.get("publishedAt", "")
                 if mode == "subscribers":
                     sub_snip = item.get("subscriberSnippet", snippet)
                     cid = sub_snip.get("channelId", "")
@@ -144,6 +157,11 @@ def import_oauth_subscriptions(oauth_token: str, mode: str = "subscriptions") ->
                     thumbs = snippet.get("thumbnails", {})
 
                 if cid and title:
+                    # Filter Masuk (Ingress Gate): buang jika berstatus unfollowed di lokal
+                    if cid in unfollowed_map:
+                        unsub_at = unfollowed_map[cid]
+                        if not sub_pub or (unsub_at and sub_pub <= unsub_at):
+                            continue
                     thumb_url = (thumbs.get("medium") or thumbs.get("default") or {}).get("url", "")
                     db.upsert_channel(
                         channel_id=cid,
@@ -171,7 +189,12 @@ def sync_public_subscriptions_by_channel(my_channel_id: str, api_key: str = "") 
     if not my_channel_id.strip() or not api_key.strip():
         return 0
 
-    existing_cids = {c["channel_id"] for c in db.list_channels()}
+    existing_cids = {c["channel_id"] for c in db.list_channels(include_unfollowed=False)}
+    unfollowed_db_map: dict[str, str] = {}
+    with db.get_conn() as conn:
+        for r in conn.execute("SELECT channel_id, COALESCE(updated_at, '') AS updated_at FROM channels WHERE status = 'unfollowed'").fetchall():
+            unfollowed_db_map[r["channel_id"]] = r["updated_at"]
+
     raw_unsub = db.get_setting("unsubscribed_map_json", "{}")
     try:
         unsub_map = json.loads(raw_unsub)
@@ -211,9 +234,9 @@ def sync_public_subscriptions_by_channel(my_channel_id: str, api_key: str = "") 
                     continue
 
                 if cid not in existing_cids:
-                    # Jika pernah di-unsubscribe dari aplikasi ini, cek apakah user baru subscribe ulang di YouTube setelah waktu unsubscribe
-                    unsub_at = unsub_map.get(cid, "")
-                    if unsub_at and sub_pub and sub_pub < unsub_at:
+                    # Filter Masuk (Ingress Gate): jika di lokal berstatus unfollowed, lewati kecuali baru di-subscribe ulang di YouTube
+                    unsub_at = unfollowed_db_map.get(cid) or unsub_map.get(cid, "")
+                    if unsub_at and (not sub_pub or sub_pub <= unsub_at):
                         continue
                     thumb_url = (thumbs.get("medium") or thumbs.get("default") or {}).get("url", "")
                     uploads_pid = "UU" + cid[2:] if cid.startswith("UC") else cid
@@ -223,6 +246,7 @@ def sync_public_subscriptions_by_channel(my_channel_id: str, api_key: str = "") 
                         thumbnail_url=thumb_url,
                         uploads_playlist_id=uploads_pid,
                         source="subscriptions",
+                        force_subscribe=True,
                     )
                     existing_cids.add(cid)
                     newly_added_channels.append(
@@ -238,6 +262,29 @@ def sync_public_subscriptions_by_channel(my_channel_id: str, api_key: str = "") 
             if not page_token:
                 break
 
+        # Cek negara asli (snippet.country) untuk channel yang baru ditambahkan
+        if newly_added_channels:
+            new_cids = [c["channel_id"] for c in newly_added_channels]
+            for i in range(0, len(new_cids), 50):
+                chunk = new_cids[i : i + 50]
+                try:
+                    c_resp = client.get(
+                        f"{YT_API_BASE}/channels",
+                        params={"part": "snippet", "id": ",".join(chunk), "key": api_key.strip()},
+                    )
+                    for ch_it in c_resp.json().get("items", []):
+                        cid = ch_it["id"]
+                        csnip = ch_it.get("snippet", {})
+                        reg = db.classify_region(
+                            csnip.get("title", ""),
+                            csnip.get("customUrl", ""),
+                            country=csnip.get("country", ""),
+                            default_lang=csnip.get("defaultLanguage", ""),
+                        )
+                        db.set_channel_region(cid, reg)
+                except Exception:
+                    pass
+
     # Langsung tarik video untuk setiap channel baru yang baru saja di-subscribe di YouTube!
     for new_ch in newly_added_channels:
         try:
@@ -249,7 +296,7 @@ def sync_public_subscriptions_by_channel(my_channel_id: str, api_key: str = "") 
 
 
 def refresh_all_channel_statistics(api_key: str = "", oauth_token: str = "") -> int:
-    """Ambil total video asli di YouTube (bisa ribuan video), jumlah subscriber, dan @handle untuk seluruh 930 channel."""
+    """Ambil total video asli di YouTube (bisa ribuan video), jumlah subscriber, @handle, dan negara/region untuk seluruh channel."""
     params, headers = _auth_params_headers(api_key, oauth_token)
     if not params and not headers:
         return 0
@@ -271,11 +318,14 @@ def refresh_all_channel_statistics(api_key: str = "", oauth_token: str = "") -> 
                     snip = ch.get("snippet", {})
                     stats = ch.get("statistics", {})
                     handle = snip.get("customUrl", "")
+                    country = snip.get("country", "")
+                    default_lang = snip.get("defaultLanguage", "")
+                    reg = db.classify_region(snip.get("title", ""), handle, country=country, default_lang=default_lang)
                     v_count = int(stats.get("videoCount", 0))
                     sub_count = int(stats.get("subscriberCount", 0))
                     conn.execute(
-                        "UPDATE channels SET yt_video_count=?, subscriber_count=?, handle=CASE WHEN ? != '' THEN ? ELSE handle END WHERE channel_id=?",
-                        (v_count, sub_count, handle, handle, cid),
+                        "UPDATE channels SET yt_video_count=?, subscriber_count=?, region=?, handle=CASE WHEN ? != '' THEN ? ELSE handle END WHERE channel_id=?",
+                        (v_count, sub_count, reg, handle, handle, cid),
                     )
                     updated += 1
     return updated

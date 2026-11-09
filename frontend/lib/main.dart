@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -37,30 +38,47 @@ class YouTubeHomeScreen extends StatefulWidget {
 }
 
 class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
-  String baseUrl = Uri.base.port == 8000 ? Uri.base.origin : 'http://127.0.0.1:8000';
-  String sidebarMode = 'full'; // 'full' (240px) | 'mini' (72px ikon saja) | 'hidden' (0px)
-  bool filterMinimized = false; // Opsi meminimalkan bar urutan/filter agar area video lebih luas
+  String baseUrl = Uri.base.port == 8000
+      ? Uri.base.origin
+      : 'http://127.0.0.1:8000';
+  String sidebarMode =
+      'full'; // 'full' (240px) | 'mini' (72px ikon saja) | 'hidden' (0px)
+  bool filterMinimized =
+      false; // Opsi meminimalkan bar urutan/filter agar area video lebih luas
   bool loading = false;
   bool refreshingYouTube = false;
   int refreshProgress = 0; // 0..100 persen
-  bool refreshReadyGreen = false; // True jika 100% selesai sync dan tombol berubah HIJAU siap diklik
+  bool refreshReadyGreen =
+      false; // True jika 100% selesai sync dan tombol berubah HIJAU siap diklik
   int refreshNewVideosCount = 0;
   Timer? _refreshPollTimer;
-  bool isStandaloneMode = false; // Otomatis aktif di HP jika tanpa backend Python
+  bool isStandaloneMode =
+      false; // Otomatis aktif di HP jika tanpa backend Python
 
   // Filter & Pagination State
   String sortBy = 'time'; // 'views' | 'likes' | 'time'
-  String period = 'all'; // 'all' | 'week' | 'month' | 'year' | '2y' | '3y' | '4y'
+  String period =
+      'all'; // 'all' | 'week' | 'month' | 'year' | '2y' | '3y' | '4y'
+  String selectedRegion = 'all'; // 'all' | 'Nasional' | 'Internasional'
   String selectedChannelId = '';
   String searchQuery = '';
+  bool get _isHpDevice =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+  String get _deviceType => _isHpDevice ? 'hp' : 'laptop';
   int limit = 25; // 25 | 50 | 100
   int defaultLimit = 25;
-  Map<String, int> tabLimits = {}; // Penyimpanan permanen jumlah video per tab/channel
+  Map<String, int> tabLimits =
+      {}; // Penyimpanan permanen jumlah video per tab/channel
   int currentPage = 1;
   int totalVideos = 0;
   int totalPages = 1;
-  RangeValues durationRange = const RangeValues(0, 120); // 0 menit s/d 120 menit (2 jam)
-  DateTime? skipUnsubscribeConfirmUntil; // Mode 10 menit langsung Unsubscribe tanpa konfirmasi
+  RangeValues durationRange = const RangeValues(
+    0,
+    120,
+  ); // 0 menit s/d 120 menit (2 jam)
+  DateTime?
+  skipUnsubscribeConfirmUntil; // Mode 10 menit langsung Unsubscribe tanpa konfirmasi
 
   List<Map<String, dynamic>> channels = [];
   List<Map<String, dynamic>> videos = [];
@@ -98,12 +116,42 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     if (_localChannels.isNotEmpty) return;
     final now = DateTime.now().toUtc();
     final demoChannels = [
-      ('UC_demo_fajrul', 'Fajrul Fx', '@FajrulFx', 'https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg'),
-      ('UC_demo_anim', 'Animated History', '@AnimatedHistory', 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg'),
-      ('UC_demo_malaka', 'MALAKA', '@malaka_project', 'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg'),
-      ('UC_demo_radit', 'Raditya Dika', '@RadityaDika', 'https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg'),
-      ('UC_demo_justin', 'Justin Sung', '@JustinSung', 'https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg'),
-      ('UC_demo_ferry', 'Ferry Irwandi', '@FerryIrwandi', 'https://i.ytimg.com/vi/RgKAFK5djSk/hqdefault.jpg'),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        '@FajrulFx',
+        'https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        '@AnimatedHistory',
+        'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        '@malaka_project',
+        'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg',
+      ),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        '@RadityaDika',
+        'https://i.ytimg.com/vi/9bZkp7q19f0/hqdefault.jpg',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        '@JustinSung',
+        'https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg',
+      ),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        '@FerryIrwandi',
+        'https://i.ytimg.com/vi/RgKAFK5djSk/hqdefault.jpg',
+      ),
     ];
     for (final c in demoChannels) {
       _localChannels.add({
@@ -118,54 +166,351 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     }
 
     const ytThumbs = [
-      'dQw4w9WgXcQ', 'M7lc1UVf-VE', 'jNQXAC9IVRw', '9bZkp7q19f0',
-      'kJQP7kiw5Fk', 'RgKAFK5djSk', 'OPf0YbXqDm0', 'fJ9rUzIMcZQ',
-      'CevxZvSJLk8', 'JGwWNGJdvx8', 'YQHsXMglC9A', 'hT_nvWreIhg',
+      'dQw4w9WgXcQ',
+      'M7lc1UVf-VE',
+      'jNQXAC9IVRw',
+      '9bZkp7q19f0',
+      'kJQP7kiw5Fk',
+      'RgKAFK5djSk',
+      'OPf0YbXqDm0',
+      'fJ9rUzIMcZQ',
+      'CevxZvSJLk8',
+      'JGwWNGJdvx8',
+      'YQHsXMglC9A',
+      'hT_nvWreIhg',
     ];
 
     final samples = [
       // Minggu ini (1 - 6 hari lalu)
-      ('UC_demo_ferry', 'Ferry Irwandi', 'Kenapa Bank Terbesar di Paraguay Bisa Kolaps? - Kasus Ueno', 1, 512000, 41200, '18:13'),
-      ('UC_demo_fajrul', 'Fajrul Fx', 'Apa yang Terjadi pada Tubuh Saat Makan Sekali Sehari (Jam demi Jam)', 2, 440000, 32900, '10:18'),
-      ('UC_demo_malaka', 'MALAKA', 'Cara Berpikir Kritis di Era Banjir Informasi (Minggu Ini)', 3, 690000, 58100, '24:14'),
-      ('UC_demo_radit', 'Raditya Dika', 'Stand Up Comedy Spesial Minggu Ini: Cerita Finansial', 4, 920000, 74500, '31:45'),
-      ('UC_demo_justin', 'Justin Sung', 'How to Study 3x Faster Without Memorizing (This Week)', 5, 310000, 27400, '16:20'),
-      ('UC_demo_anim', 'Animated History', 'Sejarah Runtuhnya Kekaisaran Romawi dalam 15 Menit', 6, 780000, 63000, '15:08'),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        'Kenapa Bank Terbesar di Paraguay Bisa Kolaps? - Kasus Ueno',
+        1,
+        512000,
+        41200,
+        '18:13',
+      ),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        'Apa yang Terjadi pada Tubuh Saat Makan Sekali Sehari (Jam demi Jam)',
+        2,
+        440000,
+        32900,
+        '10:18',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        'Cara Berpikir Kritis di Era Banjir Informasi (Minggu Ini)',
+        3,
+        690000,
+        58100,
+        '24:14',
+      ),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        'Stand Up Comedy Spesial Minggu Ini: Cerita Finansial',
+        4,
+        920000,
+        74500,
+        '31:45',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        'How to Study 3x Faster Without Memorizing (This Week)',
+        5,
+        310000,
+        27400,
+        '16:20',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        'Sejarah Runtuhnya Kekaisaran Romawi dalam 15 Menit',
+        6,
+        780000,
+        63000,
+        '15:08',
+      ),
       // Bulan ini (9 - 27 hari lalu)
-      ('UC_demo_ferry', 'Ferry Irwandi', 'Bedah Logika & Stoikisme Untuk Anak Muda (Bulan Ini)', 9, 830000, 69300, '28:40'),
-      ('UC_demo_malaka', 'MALAKA', 'Pendidikan & Masa Depan Kerja di Indonesia', 12, 1120000, 94000, '42:10'),
-      ('UC_demo_radit', 'Raditya Dika', 'Podcast Cerita Horor Kantor Baru (Bulan Ini)', 15, 1450000, 112000, '54:20'),
-      ('UC_demo_fajrul', 'Fajrul Fx', 'Eksperimen Sains: Tidur 4 Jam vs 8 Jam Selama Sebulan', 19, 610000, 48700, '14:55'),
-      ('UC_demo_justin', 'Justin Sung', 'Mind Mapping Technique for Deep Understanding', 23, 495000, 39100, '21:12'),
-      ('UC_demo_anim', 'Animated History', 'Perang Dunia II dari Sudut Pandang Ekonomi', 27, 950000, 81200, '19:33'),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        'Bedah Logika & Stoikisme Untuk Anak Muda (Bulan Ini)',
+        9,
+        830000,
+        69300,
+        '28:40',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        'Pendidikan & Masa Depan Kerja di Indonesia',
+        12,
+        1120000,
+        94000,
+        '42:10',
+      ),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        'Podcast Cerita Horor Kantor Baru (Bulan Ini)',
+        15,
+        1450000,
+        112000,
+        '54:20',
+      ),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        'Eksperimen Sains: Tidur 4 Jam vs 8 Jam Selama Sebulan',
+        19,
+        610000,
+        48700,
+        '14:55',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        'Mind Mapping Technique for Deep Understanding',
+        23,
+        495000,
+        39100,
+        '21:12',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        'Perang Dunia II dari Sudut Pandang Ekonomi',
+        27,
+        950000,
+        81200,
+        '19:33',
+      ),
       // Tahun ini (65 - 310 hari lalu)
-      ('UC_demo_radit', 'Raditya Dika', 'Tur Rumah Baru & Studio Podcast (Tahun Ini)', 65, 2850000, 198000, '38:15'),
-      ('UC_demo_ferry', 'Ferry Irwandi', 'Investigasi Fenomena Judi Online & Psikologi Bandar', 110, 3600000, 285000, '35:48'),
-      ('UC_demo_malaka', 'MALAKA', 'Monolog: Kenapa Kita Sering Merasa Tertinggal?', 160, 1940000, 164000, '29:10'),
-      ('UC_demo_fajrul', 'Fajrul Fx', 'Fisika Kuantum Dijelaskan dengan Bahasa Tongkrongan', 210, 1150000, 97500, '17:42'),
-      ('UC_demo_justin', 'Justin Sung', 'Complete Guide to Self-Regulated Learning (This Year)', 260, 870000, 71000, '26:05'),
-      ('UC_demo_anim', 'Animated History', 'Kebangkitan dan Keruntuhan Majapahit (Animasi Lengkap)', 310, 2210000, 175000, '33:20'),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        'Tur Rumah Baru & Studio Podcast (Tahun Ini)',
+        65,
+        2850000,
+        198000,
+        '38:15',
+      ),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        'Investigasi Fenomena Judi Online & Psikologi Bandar',
+        110,
+        3600000,
+        285000,
+        '35:48',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        'Monolog: Kenapa Kita Sering Merasa Tertinggal?',
+        160,
+        1940000,
+        164000,
+        '29:10',
+      ),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        'Fisika Kuantum Dijelaskan dengan Bahasa Tongkrongan',
+        210,
+        1150000,
+        97500,
+        '17:42',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        'Complete Guide to Self-Regulated Learning (This Year)',
+        260,
+        870000,
+        71000,
+        '26:05',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        'Kebangkitan dan Keruntuhan Majapahit (Animasi Lengkap)',
+        310,
+        2210000,
+        175000,
+        '33:20',
+      ),
       // 2 Tahun Lalu (420 - 690 hari lalu)
-      ('UC_demo_ferry', 'Ferry Irwandi', 'Revolusi Industri Kreatif & Konten (2 Tahun Lalu)', 420, 1420000, 108000, '22:18'),
-      ('UC_demo_radit', 'Raditya Dika', 'Belajar Investasi dari Nol untuk Pemula (2 Tahun Lalu)', 480, 3100000, 240000, '41:00'),
-      ('UC_demo_malaka', 'MALAKA', 'Episode Perdana: Membangun Manusia Merdeka (2 Tahun Lalu)', 530, 2540000, 215000, '47:30'),
-      ('UC_demo_fajrul', 'Fajrul Fx', 'Sejarah Penemuan Listrik & Konflik Tesla vs Edison', 590, 980000, 82400, '16:11'),
-      ('UC_demo_justin', 'Justin Sung', 'Why Re-reading Notes Does Not Work (2 Years Ago)', 640, 1320000, 104000, '15:45'),
-      ('UC_demo_anim', 'Animated History', 'Peta Perdagangan Jalur Sutra Kuno (2 Tahun Lalu)', 690, 1650000, 129000, '20:04'),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        'Revolusi Industri Kreatif & Konten (2 Tahun Lalu)',
+        420,
+        1420000,
+        108000,
+        '22:18',
+      ),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        'Belajar Investasi dari Nol untuk Pemula (2 Tahun Lalu)',
+        480,
+        3100000,
+        240000,
+        '41:00',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        'Episode Perdana: Membangun Manusia Merdeka (2 Tahun Lalu)',
+        530,
+        2540000,
+        215000,
+        '47:30',
+      ),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        'Sejarah Penemuan Listrik & Konflik Tesla vs Edison',
+        590,
+        980000,
+        82400,
+        '16:11',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        'Why Re-reading Notes Does Not Work (2 Years Ago)',
+        640,
+        1320000,
+        104000,
+        '15:45',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        'Peta Perdagangan Jalur Sutra Kuno (2 Tahun Lalu)',
+        690,
+        1650000,
+        129000,
+        '20:04',
+      ),
       // 3 Tahun Lalu (790 - 1060 hari lalu)
-      ('UC_demo_radit', 'Raditya Dika', 'Cerita Masa Kuliah di Luar Negeri (3 Tahun Lalu)', 790, 4200000, 310000, '27:50'),
-      ('UC_demo_ferry', 'Ferry Irwandi', 'Mindset Keuangan di Usia 20-an (3 Tahun Lalu)', 850, 1780000, 142000, '19:25'),
-      ('UC_demo_fajrul', 'Fajrul Fx', 'Bagaimana Cara Kerja Mesin Waktu Menurut Teori Relativitas?', 910, 1540000, 126000, '14:30'),
-      ('UC_demo_justin', 'Justin Sung', 'Top 1% Student Study Routine (3 Years Ago)', 960, 2450000, 195000, '18:55'),
-      ('UC_demo_anim', 'Animated History', 'Sejarah Nusantara Sebelum Era Kolonial (3 Tahun Lalu)', 1020, 2890000, 224000, '25:40'),
-      ('UC_demo_malaka', 'MALAKA', 'Diskusi Filsafat Klasik untuk Kehidupan Modern (3 Tahun Lalu)', 1060, 1190000, 96000, '36:12'),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        'Cerita Masa Kuliah di Luar Negeri (3 Tahun Lalu)',
+        790,
+        4200000,
+        310000,
+        '27:50',
+      ),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        'Mindset Keuangan di Usia 20-an (3 Tahun Lalu)',
+        850,
+        1780000,
+        142000,
+        '19:25',
+      ),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        'Bagaimana Cara Kerja Mesin Waktu Menurut Teori Relativitas?',
+        910,
+        1540000,
+        126000,
+        '14:30',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        'Top 1% Student Study Routine (3 Years Ago)',
+        960,
+        2450000,
+        195000,
+        '18:55',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        'Sejarah Nusantara Sebelum Era Kolonial (3 Tahun Lalu)',
+        1020,
+        2890000,
+        224000,
+        '25:40',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        'Diskusi Filsafat Klasik untuk Kehidupan Modern (3 Tahun Lalu)',
+        1060,
+        1190000,
+        96000,
+        '36:12',
+      ),
       // 4 Tahun Lalu (1150 - 1430 hari lalu)
-      ('UC_demo_radit', 'Raditya Dika', 'Bongkar Rahasia Menulis Buku & Skenario Film (4 Tahun Lalu)', 1150, 3850000, 290000, '34:10'),
-      ('UC_demo_fajrul', 'Fajrul Fx', 'Video Sains Pertama: Kenapa Langit Berwarna Biru? (4 Tahun Lalu)', 1220, 890000, 73000, '11:20'),
-      ('UC_demo_justin', 'Justin Sung', 'How I Transitioned from Medical School to Teaching (4 Years Ago)', 1290, 1620000, 134000, '22:00'),
-      ('UC_demo_anim', 'Animated History', 'Asal Usul Peradaban Mesopotamia (4 Tahun Lalu)', 1350, 3120000, 248000, '21:45'),
-      ('UC_demo_ferry', 'Ferry Irwandi', 'Belajar Videografi & Storytelling Sinematik (4 Tahun Lalu)', 1400, 1250000, 99500, '16:50'),
-      ('UC_demo_malaka', 'MALAKA', 'Arsip Pemikiran: Membaca Ulang Sejarah Bangsa (4 Tahun Lalu)', 1430, 1410000, 115000, '39:05'),
+      (
+        'UC_demo_radit',
+        'Raditya Dika',
+        'Bongkar Rahasia Menulis Buku & Skenario Film (4 Tahun Lalu)',
+        1150,
+        3850000,
+        290000,
+        '34:10',
+      ),
+      (
+        'UC_demo_fajrul',
+        'Fajrul Fx',
+        'Video Sains Pertama: Kenapa Langit Berwarna Biru? (4 Tahun Lalu)',
+        1220,
+        890000,
+        73000,
+        '11:20',
+      ),
+      (
+        'UC_demo_justin',
+        'Justin Sung',
+        'How I Transitioned from Medical School to Teaching (4 Years Ago)',
+        1290,
+        1620000,
+        134000,
+        '22:00',
+      ),
+      (
+        'UC_demo_anim',
+        'Animated History',
+        'Asal Usul Peradaban Mesopotamia (4 Tahun Lalu)',
+        1350,
+        3120000,
+        248000,
+        '21:45',
+      ),
+      (
+        'UC_demo_ferry',
+        'Ferry Irwandi',
+        'Belajar Videografi & Storytelling Sinematik (4 Tahun Lalu)',
+        1400,
+        1250000,
+        99500,
+        '16:50',
+      ),
+      (
+        'UC_demo_malaka',
+        'MALAKA',
+        'Arsip Pemikiran: Membaca Ulang Sejarah Bangsa (4 Tahun Lalu)',
+        1430,
+        1410000,
+        115000,
+        '39:05',
+      ),
     ];
 
     for (var i = 0; i < samples.length; i++) {
@@ -202,13 +547,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         if (bundledChs.isNotEmpty) {
           _localChannels
             ..clear()
-            ..addAll(bundledChs.map((e) => Map<String, dynamic>.from(e as Map)));
+            ..addAll(
+              bundledChs.map((e) => Map<String, dynamic>.from(e as Map)),
+            );
           _sortChannelsByWatchedDesc(_localChannels);
         }
         if (bundledVids.isNotEmpty) {
           _localVideos
             ..clear()
-            ..addAll(bundledVids.map((e) => Map<String, dynamic>.from(e as Map)));
+            ..addAll(
+              bundledVids.map((e) => Map<String, dynamic>.from(e as Map)),
+            );
         }
         if (bundledKey.isNotEmpty) {
           localApiKey = bundledKey;
@@ -234,12 +583,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       startIso = now.subtract(const Duration(days: 30)).toIso8601String();
     } else if (period == 'year') {
       startIso = now.subtract(const Duration(days: 365)).toIso8601String();
-    } else if (period.endsWith('y') && int.tryParse(period.substring(0, period.length - 1)) != null) {
+    } else if (period.endsWith('y') &&
+        int.tryParse(period.substring(0, period.length - 1)) != null) {
       final yrs = int.parse(period.substring(0, period.length - 1));
       if (yrs >= 1) {
         startIso = now.subtract(Duration(days: 365 * yrs)).toIso8601String();
         if (yrs > 1) {
-          endIso = now.subtract(Duration(days: 365 * (yrs - 1))).toIso8601String();
+          endIso = now
+              .subtract(Duration(days: 365 * (yrs - 1)))
+              .toIso8601String();
         }
       }
     }
@@ -248,11 +600,18 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final minSec = durationRange.start.round() * 60;
     final maxSec = durationRange.end.round() * 60;
     final filtered = _localVideos.where((v) {
-      if (selectedChannelId.isNotEmpty && v['channel_id'] != selectedChannelId) {
+      if (selectedChannelId.isNotEmpty &&
+          v['channel_id'] != selectedChannelId) {
         return false;
       }
+      if (selectedRegion != 'all') {
+        final reg = (v['region'] ?? 'Nasional').toString();
+        if (reg != selectedRegion) return false;
+      }
       if (minSec > 0 || durationRange.end.round() < 120) {
-        final durSec = (v['duration_seconds'] as int?) ?? _durationToSeconds((v['duration'] ?? '').toString());
+        final durSec =
+            (v['duration_seconds'] as int?) ??
+            _durationToSeconds((v['duration'] ?? '').toString());
         if (minSec > 0 && durSec < minSec) return false;
         if (durationRange.end.round() < 120 && durSec > maxSec) return false;
       }
@@ -272,11 +631,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
     filtered.sort((a, b) {
       if (sortBy == 'views') {
-        return ((b['view_count'] ?? 0) as int).compareTo((a['view_count'] ?? 0) as int);
+        final va = ((a['view_count'] ?? 0) as int) + ((a['views_total'] ?? 0) as int);
+        final vb = ((b['view_count'] ?? 0) as int) + ((b['views_total'] ?? 0) as int);
+        return vb.compareTo(va);
       } else if (sortBy == 'likes') {
-        return ((b['like_count'] ?? 0) as int).compareTo((a['like_count'] ?? 0) as int);
+        return ((b['like_count'] ?? 0) as int).compareTo(
+          (a['like_count'] ?? 0) as int,
+        );
       }
-      return (b['published_at'] ?? '').toString().compareTo((a['published_at'] ?? '').toString());
+      return (b['published_at'] ?? '').toString().compareTo(
+        (a['published_at'] ?? '').toString(),
+      );
     });
 
     final total = filtered.length;
@@ -332,9 +697,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         });
         final defLim = (sData['default_limit'] as int?) ?? 25;
         final sessChannel = (sess['channel_id'] ?? '').toString();
-        final activeLim = parsedTabLimits[sessChannel.isEmpty ? 'home' : sessChannel] ?? defLim;
-        final minM = ((sess['min_minutes'] ?? 0) as num).toDouble().clamp(0.0, 120.0);
-        final maxM = ((sess['max_minutes'] ?? 120) as num).toDouble().clamp(minM, 120.0);
+        final activeLim =
+            parsedTabLimits[sessChannel.isEmpty ? 'home' : sessChannel] ??
+            defLim;
+        final minM = ((sess['min_minutes'] ?? 0) as num).toDouble().clamp(
+          0.0,
+          120.0,
+        );
+        final maxM = ((sess['max_minutes'] ?? 120) as num).toDouble().clamp(
+          minM,
+          120.0,
+        );
         final rState = (sData['refresh_state'] as Map?) ?? {};
         final rRunning = (rState['running'] as bool?) ?? false;
         final rReady = (rState['done_ready'] as bool?) ?? false;
@@ -351,7 +724,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           tabLimits = parsedTabLimits;
           sortBy = (sess['sort_by'] ?? 'time').toString();
           period = (sess['period'] ?? 'all').toString();
-          if (period.endsWith('y') && int.tryParse(period.substring(0, period.length - 1)) != null) {
+          selectedRegion = (sess['region'] ?? 'all').toString();
+          if (period.endsWith('y') &&
+              int.tryParse(period.substring(0, period.length - 1)) != null) {
             _yearInputCtrl.text = period.substring(0, period.length - 1);
           } else {
             _yearInputCtrl.clear();
@@ -363,7 +738,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           durationRange = RangeValues(minM, maxM);
           sidebarMode = (sess['sidebar_mode'] ?? 'full').toString();
           filterMinimized = (sess['filter_minimized'] as bool?) ?? false;
-          limit = (activeLim == 25 || activeLim == 50 || activeLim == 100) ? activeLim : 25;
+          limit = (activeLim == 25 || activeLim == 50 || activeLim == 100)
+              ? activeLim
+              : 25;
           refreshingYouTube = rRunning;
           refreshReadyGreen = rReady;
           refreshProgress = rProg;
@@ -379,7 +756,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
   void _startRefreshPolling() {
     _refreshPollTimer?.cancel();
-    _refreshPollTimer = Timer.periodic(const Duration(milliseconds: 600), (timer) async {
+    _refreshPollTimer = Timer.periodic(const Duration(milliseconds: 600), (
+      timer,
+    ) async {
       if (!mounted || isStandaloneMode) {
         timer.cancel();
         return;
@@ -429,9 +808,14 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     });
   }
 
-  Future<void> _saveUiPreferences({int? newLimit, String? newSidebarMode, bool? newFilterMinimized}) async {
+  Future<void> _saveUiPreferences({
+    int? newLimit,
+    String? newSidebarMode,
+    bool? newFilterMinimized,
+  }) async {
     final tabKey = selectedChannelId.isEmpty ? 'home' : selectedChannelId;
-    if (newLimit != null && (newLimit == 25 || newLimit == 50 || newLimit == 100)) {
+    if (newLimit != null &&
+        (newLimit == 25 || newLimit == 50 || newLimit == 100)) {
       defaultLimit = newLimit;
       tabLimits[tabKey] = newLimit;
     }
@@ -443,6 +827,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           body: jsonEncode({
             'sort_by': sortBy,
             'period': period,
+            'region': selectedRegion,
             'channel_id': selectedChannelId,
             'q': searchQuery,
             'page': currentPage,
@@ -519,9 +904,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           await _standaloneSyncSubscriptionsByMyChannel();
         }
         final targetChs = _localChannels
-            .where((ch) =>
-                !(ch['channel_id'] ?? '').toString().startsWith('UC_demo_') &&
-                (selectedChannelId.isEmpty || ch['channel_id'] == selectedChannelId))
+            .where(
+              (ch) =>
+                  !(ch['channel_id'] ?? '').toString().startsWith('UC_demo_') &&
+                  (selectedChannelId.isEmpty ||
+                      ch['channel_id'] == selectedChannelId),
+            )
             .toList();
         await _standaloneFastRefreshChannels(targetChs);
         if (!mounted) return;
@@ -529,7 +917,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           refreshingYouTube = false;
           refreshProgress = 100;
           refreshReadyGreen = true;
-          refreshNewVideosCount = (_localVideos.length - beforeCount).clamp(0, 999999);
+          refreshNewVideosCount = (_localVideos.length - beforeCount).clamp(
+            0,
+            999999,
+          );
         });
       } else {
         final res = await http.post(
@@ -553,7 +944,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text('⚠️ Gagal Refresh YouTube: ${e.toString().replaceAll("Exception: ", "")}'),
+            content: Text(
+              '⚠️ Gagal Refresh YouTube: ${e.toString().replaceAll("Exception: ", "")}',
+            ),
           ),
         );
       }
@@ -574,6 +967,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         queryParameters: {
           'sort_by': sortBy,
           'period': period,
+          'region': selectedRegion,
           'channel_id': selectedChannelId,
           'q': searchQuery,
           'limit': limit.toString(),
@@ -611,7 +1005,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   Future<void> _standaloneSyncSubscriptionsByMyChannel() async {
     if (localMyChannelId.isEmpty || localApiKey.isEmpty) return;
     try {
-      final existingCids = _localChannels.map((c) => (c['channel_id'] ?? '').toString()).toSet();
+      final existingCids = _localChannels
+          .map((c) => (c['channel_id'] ?? '').toString())
+          .toSet();
       String? pageToken;
       for (var page = 0; page < 25; page++) {
         final params = <String, String>{
@@ -624,7 +1020,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         if (pageToken != null && pageToken.isNotEmpty) {
           params['pageToken'] = pageToken;
         }
-        final uri = Uri.https('www.googleapis.com', '/youtube/v3/subscriptions', params);
+        final uri = Uri.https(
+          'www.googleapis.com',
+          '/youtube/v3/subscriptions',
+          params,
+        );
         final res = await http.get(uri).timeout(const Duration(seconds: 8));
         if (res.statusCode != 200) break;
         final data = jsonDecode(res.body);
@@ -632,15 +1032,21 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         for (final item in items) {
           final snip = item['snippet'] ?? {};
           final cid = (snip['resourceId']?['channelId'] ?? '').toString();
-          if (cid.isEmpty || existingCids.contains(cid) || _localUnsubscribedIds.contains(cid)) continue;
+          if (cid.isEmpty ||
+              existingCids.contains(cid) ||
+              _localUnsubscribedIds.contains(cid))
+            continue;
           final title = (snip['title'] ?? cid).toString();
-          final thumb = (snip['thumbnails']?['default']?['url'] ?? '').toString();
+          final thumb = (snip['thumbnails']?['default']?['url'] ?? '')
+              .toString();
           _localChannels.add({
             'channel_id': cid,
             'title': title,
             'handle': '',
             'thumbnail_url': thumb,
-            'uploads_playlist_id': cid.startsWith('UC') ? 'UU${cid.substring(2)}' : cid,
+            'uploads_playlist_id': cid.startsWith('UC')
+                ? 'UU${cid.substring(2)}'
+                : cid,
             'source': 'subscriptions',
             'video_count': 0,
             'watched_count': 0,
@@ -654,45 +1060,64 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     } catch (_) {}
   }
 
-  Future<void> _standaloneFastRefreshChannels(List<Map<String, dynamic>> targetChs) async {
+  Future<void> _standaloneFastRefreshChannels(
+    List<Map<String, dynamic>> targetChs,
+  ) async {
     if (targetChs.isEmpty) return;
-    final existingVidIds = _localVideos.map((v) => (v['video_id'] ?? '').toString()).toSet();
+    final existingVidIds = _localVideos
+        .map((v) => (v['video_id'] ?? '').toString())
+        .toSet();
     final newVidMeta = <String, Map<String, String>>{};
     final vidRegex = RegExp(r'<yt:videoId>([^<]+)</yt:videoId>');
 
     const batchSize = 35;
     for (var i = 0; i < targetChs.length; i += batchSize) {
-      final chunk = targetChs.sublist(i, (i + batchSize > targetChs.length) ? targetChs.length : i + batchSize);
-      await Future.wait(chunk.map((ch) async {
-        final cid = (ch['channel_id'] ?? '').toString();
-        if (!cid.startsWith('UC')) return;
-        try {
-          final feedUri = Uri.parse('https://www.youtube.com/feeds/videos.xml?channel_id=$cid');
-          final res = await http.get(feedUri).timeout(const Duration(seconds: 5));
-          if (res.statusCode == 200) {
-            final matches = vidRegex.allMatches(res.body);
-            for (final m in matches) {
-              final vid = (m.group(1) ?? '').trim();
-              if (vid.isNotEmpty && !existingVidIds.contains(vid)) {
-                newVidMeta[vid] = {
-                  'channel_id': cid,
-                  'channel_title': (ch['title'] ?? '').toString(),
-                  'channel_thumbnail': (ch['thumbnail_url'] ?? '').toString(),
-                };
+      final chunk = targetChs.sublist(
+        i,
+        (i + batchSize > targetChs.length) ? targetChs.length : i + batchSize,
+      );
+      await Future.wait(
+        chunk.map((ch) async {
+          final cid = (ch['channel_id'] ?? '').toString();
+          if (!cid.startsWith('UC')) return;
+          try {
+            final feedUri = Uri.parse(
+              'https://www.youtube.com/feeds/videos.xml?channel_id=$cid',
+            );
+            final res = await http
+                .get(feedUri)
+                .timeout(const Duration(seconds: 5));
+            if (res.statusCode == 200) {
+              final matches = vidRegex.allMatches(res.body);
+              for (final m in matches) {
+                final vid = (m.group(1) ?? '').trim();
+                if (vid.isNotEmpty && !existingVidIds.contains(vid)) {
+                  newVidMeta[vid] = {
+                    'channel_id': cid,
+                    'channel_title': (ch['title'] ?? '').toString(),
+                    'channel_thumbnail': (ch['thumbnail_url'] ?? '').toString(),
+                  };
+                }
               }
             }
-          }
-        } catch (_) {}
-      }));
+          } catch (_) {}
+        }),
+      );
       if (!mounted) return;
       setState(() {
-        refreshProgress = ((i + chunk.length) * 90 ~/ targetChs.length).clamp(5, 92);
+        refreshProgress = ((i + chunk.length) * 90 ~/ targetChs.length).clamp(
+          5,
+          92,
+        );
       });
     }
 
     final newIds = newVidMeta.keys.toList();
     for (var i = 0; i < newIds.length; i += 50) {
-      final slice = newIds.sublist(i, (i + 50 > newIds.length) ? newIds.length : i + 50);
+      final slice = newIds.sublist(
+        i,
+        (i + 50 > newIds.length) ? newIds.length : i + 50,
+      );
       try {
         final vUri = Uri.https('www.googleapis.com', '/youtube/v3/videos', {
           'part': 'snippet,statistics,contentDetails',
@@ -708,21 +1133,32 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             final vsnip = v['snippet'] ?? {};
             final vstats = v['statistics'] ?? {};
             final meta = newVidMeta[vid] ?? {};
-            final cid = (vsnip['channelId'] ?? meta['channel_id'] ?? '').toString();
-            final durStr = _parseIsoDuration((v['contentDetails']?['duration'] ?? '').toString());
+            final cid = (vsnip['channelId'] ?? meta['channel_id'] ?? '')
+                .toString();
+            final durStr = _parseIsoDuration(
+              (v['contentDetails']?['duration'] ?? '').toString(),
+            );
             _localVideos.insert(0, {
               'video_id': vid,
               'channel_id': cid,
-              'channel_title': (vsnip['channelTitle'] ?? meta['channel_title'] ?? '').toString(),
+              'channel_title':
+                  (vsnip['channelTitle'] ?? meta['channel_title'] ?? '')
+                      .toString(),
               'channel_thumbnail': (meta['channel_thumbnail'] ?? '').toString(),
               'title': (vsnip['title'] ?? 'Untitled').toString(),
-              'thumbnail_url': (vsnip['thumbnails']?['high']?['url'] ??
-                      vsnip['thumbnails']?['medium']?['url'] ??
-                      'https://i.ytimg.com/vi/$vid/hqdefault.jpg')
-                  .toString(),
-              'published_at': (vsnip['publishedAt'] ?? DateTime.now().toUtc().toIso8601String()).toString(),
-              'view_count': int.tryParse((vstats['viewCount'] ?? '0').toString()) ?? 0,
-              'like_count': int.tryParse((vstats['likeCount'] ?? '0').toString()) ?? 0,
+              'thumbnail_url':
+                  (vsnip['thumbnails']?['high']?['url'] ??
+                          vsnip['thumbnails']?['medium']?['url'] ??
+                          'https://i.ytimg.com/vi/$vid/hqdefault.jpg')
+                      .toString(),
+              'published_at':
+                  (vsnip['publishedAt'] ??
+                          DateTime.now().toUtc().toIso8601String())
+                      .toString(),
+              'view_count':
+                  int.tryParse((vstats['viewCount'] ?? '0').toString()) ?? 0,
+              'like_count':
+                  int.tryParse((vstats['likeCount'] ?? '0').toString()) ?? 0,
               'duration': durStr,
               'duration_seconds': _durationToSeconds(durStr),
               'watched_count': _getCreatorWatchedCount(cid),
@@ -739,7 +1175,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     String raw = identifier.trim();
     if (raw.isEmpty) throw Exception('Masukkan @handle atau ID Channel');
     if (localApiKey.isEmpty) {
-      throw Exception('Masukkan YouTube API Key dulu di menu Pengaturan API (⚙️).');
+      throw Exception(
+        'Masukkan YouTube API Key dulu di menu Pengaturan API (⚙️).',
+      );
     }
     if (raw.contains('youtube.com/')) {
       if (raw.contains('/@')) {
@@ -761,12 +1199,18 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       queryParams['forHandle'] = '@$raw';
     }
 
-    final chUri = Uri.https('www.googleapis.com', '/youtube/v3/channels', queryParams);
+    final chUri = Uri.https(
+      'www.googleapis.com',
+      '/youtube/v3/channels',
+      queryParams,
+    );
     final chRes = await http.get(chUri);
     final chData = jsonDecode(chRes.body);
     final items = (chData['items'] as List?) ?? [];
     if (items.isEmpty) {
-      throw Exception('Channel "$identifier" tidak ditemukan atau API Key kurang tepat.');
+      throw Exception(
+        'Channel "$identifier" tidak ditemukan atau API Key kurang tepat.',
+      );
     }
 
     final ch = items[0];
@@ -774,10 +1218,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final snip = ch['snippet'] ?? {};
     final title = (snip['title'] ?? raw).toString();
     final handle = (snip['customUrl'] ?? raw).toString();
-    final thumbUrl = ((snip['thumbnails']?['medium'] ?? snip['thumbnails']?['default'])?['url'] ?? '').toString();
-    final uploadsPid = (ch['contentDetails']?['relatedPlaylists']?['uploads'] ??
-            (cid.startsWith('UC') ? 'UU${cid.substring(2)}' : cid))
-        .toString();
+    final thumbUrl =
+        ((snip['thumbnails']?['medium'] ??
+                    snip['thumbnails']?['default'])?['url'] ??
+                '')
+            .toString();
+    final uploadsPid =
+        (ch['contentDetails']?['relatedPlaylists']?['uploads'] ??
+                (cid.startsWith('UC') ? 'UU${cid.substring(2)}' : cid))
+            .toString();
 
     _localChannels.removeWhere((c) => c['channel_id'] == cid);
     _localChannels.add({
@@ -823,13 +1272,21 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           'channel_title': title,
           'channel_thumbnail': thumbUrl,
           'title': (vsnip['title'] ?? 'Untitled').toString(),
-          'thumbnail_url': ((vsnip['thumbnails']?['high'] ?? vsnip['thumbnails']?['medium'])?['url'] ??
-                  'https://i.ytimg.com/vi/$vid/hqdefault.jpg')
-              .toString(),
-          'published_at': (vsnip['publishedAt'] ?? DateTime.now().toUtc().toIso8601String()).toString(),
-          'view_count': int.tryParse((vstats['viewCount'] ?? '0').toString()) ?? 0,
-          'like_count': int.tryParse((vstats['likeCount'] ?? '0').toString()) ?? 0,
-          'duration': _parseIsoDuration((v['contentDetails']?['duration'] ?? '').toString()),
+          'thumbnail_url':
+              ((vsnip['thumbnails']?['high'] ??
+                          vsnip['thumbnails']?['medium'])?['url'] ??
+                      'https://i.ytimg.com/vi/$vid/hqdefault.jpg')
+                  .toString(),
+          'published_at':
+              (vsnip['publishedAt'] ?? DateTime.now().toUtc().toIso8601String())
+                  .toString(),
+          'view_count':
+              int.tryParse((vstats['viewCount'] ?? '0').toString()) ?? 0,
+          'like_count':
+              int.tryParse((vstats['likeCount'] ?? '0').toString()) ?? 0,
+          'duration': _parseIsoDuration(
+            (v['contentDetails']?['duration'] ?? '').toString(),
+          ),
           'is_demo': 0,
         });
       }
@@ -930,37 +1387,75 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
   Future<void> _openYouTubeVideo(Map<String, dynamic> video) async {
     final channelId = (video['channel_id'] ?? '').toString();
-    if (channelId.isNotEmpty) {
-      final nextCount = _getCreatorWatchedCount(channelId, video) + 1;
-      setState(() {
+    final videoId = (video['video_id'] ?? '').toString();
+    final isHp = _isHpDevice;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    setState(() {
+      void updateChannelViews(Map<String, dynamic> c) {
+        final hp = int.tryParse((c['views_hp'] ?? 0).toString()) ?? 0;
+        final lap = int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
+        final newHp = isHp ? hp + 1 : hp;
+        final newLap = isHp ? lap : lap + 1;
+        c['views_hp'] = newHp;
+        c['views_laptop'] = newLap;
+        c['views_total'] = newHp + newLap;
+        c['watched_count'] = newHp + newLap;
+        c['updated_at'] = nowIso;
+      }
+
+      void updateVideoViews(Map<String, dynamic> v) {
+        final hp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
+        final lap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
+        final newHp = isHp ? hp + 1 : hp;
+        final newLap = isHp ? lap : lap + 1;
+        v['views_hp'] = newHp;
+        v['views_laptop'] = newLap;
+        v['views_total'] = newHp + newLap;
+        v['updated_at'] = nowIso;
+      }
+
+      if (channelId.isNotEmpty) {
         for (final c in channels) {
           if ((c['channel_id'] ?? '').toString() == channelId) {
-            c['watched_count'] = nextCount;
+            updateChannelViews(c);
           }
         }
         for (final c in _localChannels) {
           if ((c['channel_id'] ?? '').toString() == channelId) {
-            c['watched_count'] = nextCount;
+            updateChannelViews(c);
           }
         }
         _sortChannelsByWatchedDesc(channels);
         _sortChannelsByWatchedDesc(_localChannels);
+      }
+
+      if (videoId.isNotEmpty) {
         for (final v in videos) {
-          if ((v['channel_id'] ?? '').toString() == channelId) {
-            v['watched_count'] = nextCount;
+          if ((v['video_id'] ?? '').toString() == videoId) {
+            updateVideoViews(v);
           }
         }
         for (final v in _localVideos) {
-          if ((v['channel_id'] ?? '').toString() == channelId) {
-            v['watched_count'] = nextCount;
+          if ((v['video_id'] ?? '').toString() == videoId) {
+            updateVideoViews(v);
           }
         }
-      });
-      if (!isStandaloneMode) {
-        try {
-          http.post(Uri.parse('$baseUrl/api/channels/${Uri.encodeComponent(channelId)}/watch'));
-        } catch (_) {}
       }
+    });
+
+    if (!isStandaloneMode && videoId.isNotEmpty) {
+      try {
+        http.post(
+          Uri.parse('$baseUrl/api/videos/${Uri.encodeComponent(videoId)}/watch'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'device': _deviceType,
+            'channel_id': channelId,
+            'video_id': videoId,
+          }),
+        );
+      } catch (_) {}
     }
 
     String rawId = (video['video_id'] ?? '').toString();
@@ -975,15 +1470,25 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   }
 
   bool get _isFastUnsubscribeActive =>
-      skipUnsubscribeConfirmUntil != null && DateTime.now().isBefore(skipUnsubscribeConfirmUntil!);
+      skipUnsubscribeConfirmUntil != null &&
+      DateTime.now().isBefore(skipUnsubscribeConfirmUntil!);
 
-  Future<void> _executeUnsubscribe(String channelId, String channelTitle) async {
+  Future<void> _executeUnsubscribe(
+    String channelId,
+    String channelTitle,
+  ) async {
     _localUnsubscribedIds.add(channelId);
-    // Hapus langsung dari tampilan supaya instan
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    // Update status menjadi 'unfollowed' dengan timestamp terbaru untuk rekonsiliasi sync
     setState(() {
+      for (final c in _localChannels) {
+        if ((c['channel_id'] ?? '').toString() == channelId) {
+          c['status'] = 'unfollowed';
+          c['updated_at'] = nowIso;
+        }
+      }
       channels.removeWhere((c) => c['channel_id'] == channelId);
       videos.removeWhere((v) => v['channel_id'] == channelId);
-      _localChannels.removeWhere((c) => c['channel_id'] == channelId);
       _localVideos.removeWhere((v) => v['channel_id'] == channelId);
       if (selectedChannelId == channelId) {
         selectedChannelId = '';
@@ -992,7 +1497,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
     if (!isStandaloneMode) {
       try {
-        await http.delete(Uri.parse('$baseUrl/api/channels/${Uri.encodeComponent(channelId)}'));
+        await http.post(
+          Uri.parse('$baseUrl/api/channels/${Uri.encodeComponent(channelId)}/unfollow'),
+        );
       } catch (_) {}
     }
 
@@ -1013,7 +1520,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     _fetchVideos();
   }
 
-  Future<void> _confirmOrUnsubscribeChannel(String channelId, String channelTitle) async {
+  Future<void> _confirmOrUnsubscribeChannel(
+    String channelId,
+    String channelTitle,
+  ) async {
     if (channelId.isEmpty) return;
 
     // Jika masih dalam masa 10 menit bebas notifikasi, langsung Unsubscribe!
@@ -1028,7 +1538,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModalState) => AlertDialog(
           backgroundColor: const Color(0xFF212121),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           title: Row(
             children: [
               const Icon(Icons.person_remove_alt_1, color: Color(0xFFFF0033)),
@@ -1036,7 +1548,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               Expanded(
                 child: Text(
                   'Unsubscribe "$channelTitle"?',
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
@@ -1054,14 +1569,20 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 const SizedBox(height: 16),
                 InkWell(
                   borderRadius: BorderRadius.circular(8),
-                  onTap: () => setModalState(() => skipNext10Min = !skipNext10Min),
+                  onTap: () =>
+                      setModalState(() => skipNext10Min = !skipNext10Min),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFF161616),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: skipNext10Min ? const Color(0xFFFF0033) : const Color(0xFF383838),
+                        color: skipNext10Min
+                            ? const Color(0xFFFF0033)
+                            : const Color(0xFF383838),
                       ),
                     ),
                     child: Row(
@@ -1069,12 +1590,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         Checkbox(
                           value: skipNext10Min,
                           activeColor: const Color(0xFFFF0033),
-                          onChanged: (val) => setModalState(() => skipNext10Min = val ?? false),
+                          onChanged: (val) =>
+                              setModalState(() => skipNext10Min = val ?? false),
                         ),
                         const Expanded(
                           child: Text(
                             'Selama 10 menit ke depan, jangan tanya lagi (langsung Unsubscribe otomatis setiap klik)',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
@@ -1087,7 +1612,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Batal', style: TextStyle(color: Colors.white70)),
+              child: const Text(
+                'Batal',
+                style: TextStyle(color: Colors.white70),
+              ),
             ),
             ElevatedButton.icon(
               icon: const Icon(Icons.person_remove, size: 18),
@@ -1099,7 +1627,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               onPressed: () {
                 if (skipNext10Min) {
                   setState(() {
-                    skipUnsubscribeConfirmUntil = DateTime.now().add(const Duration(minutes: 10));
+                    skipUnsubscribeConfirmUntil = DateTime.now().add(
+                      const Duration(minutes: 10),
+                    );
                   });
                 }
                 Navigator.pop(ctx);
@@ -1112,6 +1642,401 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     );
   }
 
+  Future<void> _showUsbSyncDialog() async {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.usb, color: Colors.cyanAccent),
+              SizedBox(width: 8),
+              Text(
+                'Sync USB (HP ⇄ Laptop)',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF282828),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _isHpDevice ? Icons.phone_android : Icons.laptop_chromebook,
+                      color: Colors.amberAccent,
+                      size: 26,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Perangkat ini: ${_isHpDevice ? "📱 HP Android" : "💻 Laptop / Desktop"}\n• Tulis: views_${_isHpDevice ? "hp" : "laptop"}\n• Terima: views_${_isHpDevice ? "laptop" : "hp"}',
+                        style: const TextStyle(fontSize: 12, color: Colors.white70),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Hubungkan kabel USB dari HP ke Laptop, lalu klik tombol di bawah:',
+                style: TextStyle(fontSize: 12.5, color: Colors.white70),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00838F),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.bolt, color: Colors.yellowAccent),
+                  label: const Text(
+                    '⚡ Sync Langsung Kabel USB',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await _performDirectUsbSync();
+                  },
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white24),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                      icon: const Icon(Icons.download, size: 16, color: Colors.greenAccent),
+                      label: const Text('Export JSON', style: TextStyle(fontSize: 12, color: Colors.white)),
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _exportSyncJson();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white24),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                      icon: const Icon(Icons.upload, size: 16, color: Colors.orangeAccent),
+                      label: const Text('Import JSON', style: TextStyle(fontSize: 12, color: Colors.white)),
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _importSyncJson();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Tutup', style: TextStyle(color: Colors.white54)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _performDirectUsbSync() async {
+    setState(() => loading = true);
+    try {
+      final payload = {
+        'device': _deviceType,
+        'videos': [
+          for (final v in (_localVideos.isNotEmpty ? _localVideos : videos))
+            if ((int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0) > 0 ||
+                (int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0) > 0)
+              {
+                'video_id': v['video_id'],
+                'views_hp': v['views_hp'] ?? 0,
+                'views_laptop': v['views_laptop'] ?? 0,
+                'updated_at': v['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+              }
+        ],
+        'channels': [
+          for (final c in (_localChannels.isNotEmpty ? _localChannels : channels))
+            {
+              'channel_id': c['channel_id'],
+              'title': c['title'],
+              'handle': c['handle'] ?? '',
+              'views_hp': c['views_hp'] ?? 0,
+              'views_laptop': c['views_laptop'] ?? 0,
+              'status': c['status'] ?? 'subscribed',
+              'region': c['region'] ?? 'Nasional',
+              'updated_at': c['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+            }
+        ],
+      };
+
+      http.Response? syncResp;
+      final candidates = <String>{
+        baseUrl,
+        'http://127.0.0.1:8000',
+        'http://10.0.2.2:8000',
+        'http://172.18.164.232:8000',
+        'http://192.168.68.54:8000',
+      };
+      for (final cand in candidates) {
+        try {
+          final r = await http.post(
+            Uri.parse('$cand/api/sync/exchange'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          ).timeout(const Duration(seconds: 4));
+          if (r.statusCode == 200) {
+            baseUrl = cand;
+            syncResp = r;
+            break;
+          }
+        } catch (_) {}
+      }
+
+      if (syncResp != null && syncResp.statusCode == 200) {
+        final data = jsonDecode(syncResp.body);
+        final remoteVids = (data['videos'] as List?) ?? [];
+        final remoteChs = (data['channels'] as List?) ?? [];
+
+        final remoteVidMap = {for (final v in remoteVids) (v['video_id'] ?? '').toString(): v};
+        final remoteChMap = {for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c};
+
+        for (final v in _localVideos) {
+          final vid = (v['video_id'] ?? '').toString();
+          if (remoteVidMap.containsKey(vid)) {
+            final rv = remoteVidMap[vid];
+            final rHp = int.tryParse((rv['views_hp'] ?? 0).toString()) ?? 0;
+            final rLap = int.tryParse((rv['views_laptop'] ?? 0).toString()) ?? 0;
+            final curHp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
+            final curLap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
+            final nextHp = curHp > rHp ? curHp : rHp;
+            final nextLap = curLap > rLap ? curLap : rLap;
+            v['views_hp'] = nextHp;
+            v['views_laptop'] = nextLap;
+            v['views_total'] = nextHp + nextLap;
+            if (rv['region'] != null && rv['region'].toString().isNotEmpty) {
+              v['region'] = rv['region'].toString();
+            }
+          }
+        }
+
+        for (final c in _localChannels) {
+          final cid = (c['channel_id'] ?? '').toString();
+          if (remoteChMap.containsKey(cid)) {
+            final rc = remoteChMap[cid];
+            final rHp = int.tryParse((rc['views_hp'] ?? 0).toString()) ?? 0;
+            final rLap = int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
+            final curHp = int.tryParse((c['views_hp'] ?? 0).toString()) ?? 0;
+            final curLap = int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
+            final nextHp = curHp > rHp ? curHp : rHp;
+            final nextLap = curLap > rLap ? curLap : rLap;
+            c['views_hp'] = nextHp;
+            c['views_laptop'] = nextLap;
+            c['views_total'] = nextHp + nextLap;
+            c['watched_count'] = nextHp + nextLap;
+            if (rc['status'] != null) c['status'] = rc['status'];
+            if (rc['region'] != null) c['region'] = rc['region'];
+          }
+        }
+
+        _sortChannelsByWatchedDesc(_localChannels);
+        _sortChannelsByWatchedDesc(channels);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFF1B5E20),
+              content: Text(
+                '⚡ Sinkronisasi USB Berhasil! Data view HP & Laptop terhubung (${remoteVids.length} video, ${remoteChs.length} channel).',
+              ),
+            ),
+          );
+        }
+        await _fetchVideos();
+      } else {
+        throw Exception('Tidak dapat terhubung ke Laptop via kabel USB. Pastikan backend di laptop menyala.');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('⚠️ Gagal Sync USB: ${e.toString().replaceAll("Exception: ", "")}'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _exportSyncJson() async {
+    final payload = {
+      'device': _deviceType,
+      'exported_at': DateTime.now().toUtc().toIso8601String(),
+      'videos': [
+        for (final v in (_localVideos.isNotEmpty ? _localVideos : videos))
+          if ((int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0) > 0 ||
+              (int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0) > 0)
+            {
+              'video_id': v['video_id'],
+              'views_hp': v['views_hp'] ?? 0,
+              'views_laptop': v['views_laptop'] ?? 0,
+              'region': v['region'] ?? 'Nasional',
+              'updated_at': v['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+            }
+      ],
+      'channels': [
+        for (final c in (_localChannels.isNotEmpty ? _localChannels : channels))
+          {
+            'channel_id': c['channel_id'],
+            'title': c['title'],
+            'handle': c['handle'] ?? '',
+            'views_hp': c['views_hp'] ?? 0,
+            'views_laptop': c['views_laptop'] ?? 0,
+            'status': c['status'] ?? 'subscribed',
+            'region': c['region'] ?? 'Nasional',
+            'updated_at': c['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+          }
+      ],
+    };
+    final jsonStr = jsonEncode(payload);
+    await Clipboard.setData(ClipboardData(text: jsonStr));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF1B5E20),
+          content: Text('📋 Paket data sync (.json) berhasil disalin ke Clipboard!'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _importSyncJson() async {
+    final ctrl = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          title: const Text('Import Paket Data Sync', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Tempelkan isi JSON data sync dari perangkat lain:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ctrl,
+                maxLines: 6,
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.white),
+                decoration: const InputDecoration(
+                  hintText: '{"device": "...", "videos": [...], "channels": [...]}',
+                  hintStyle: TextStyle(color: Colors.white24, fontSize: 11),
+                  filled: true,
+                  fillColor: Color(0xFF282828),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal', style: TextStyle(color: Colors.white54))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF0033), foregroundColor: Colors.white),
+              onPressed: () {
+                Navigator.pop(ctx);
+                _applySyncDataString(ctrl.text);
+              },
+              child: const Text('Terapkan Sync'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _applySyncDataString(String rawJson) {
+    try {
+      final data = jsonDecode(rawJson.trim());
+      final remoteVids = (data['videos'] as List?) ?? [];
+      final remoteChs = (data['channels'] as List?) ?? [];
+      final remoteVidMap = {for (final v in remoteVids) (v['video_id'] ?? '').toString(): v};
+      final remoteChMap = {for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c};
+
+      setState(() {
+        for (final v in _localVideos) {
+          final vid = (v['video_id'] ?? '').toString();
+          if (remoteVidMap.containsKey(vid)) {
+            final rv = remoteVidMap[vid];
+            final rHp = int.tryParse((rv['views_hp'] ?? 0).toString()) ?? 0;
+            final rLap = int.tryParse((rv['views_laptop'] ?? 0).toString()) ?? 0;
+            final curHp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
+            final curLap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
+            final nextHp = curHp > rHp ? curHp : rHp;
+            final nextLap = curLap > rLap ? curLap : rLap;
+            v['views_hp'] = nextHp;
+            v['views_laptop'] = nextLap;
+            v['views_total'] = nextHp + nextLap;
+            if (rv['region'] != null && rv['region'].toString().isNotEmpty) {
+              v['region'] = rv['region'].toString();
+            }
+          }
+        }
+        for (final c in _localChannels) {
+          final cid = (c['channel_id'] ?? '').toString();
+          if (remoteChMap.containsKey(cid)) {
+            final rc = remoteChMap[cid];
+            final rHp = int.tryParse((rc['views_hp'] ?? 0).toString()) ?? 0;
+            final rLap = int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
+            final curHp = int.tryParse((c['views_hp'] ?? 0).toString()) ?? 0;
+            final curLap = int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
+            final nextHp = curHp > rHp ? curHp : rHp;
+            final nextLap = curLap > rLap ? curLap : rLap;
+            c['views_hp'] = nextHp;
+            c['views_laptop'] = nextLap;
+            c['views_total'] = nextHp + nextLap;
+            c['watched_count'] = nextHp + nextLap;
+            if (rc['status'] != null) c['status'] = rc['status'];
+            if (rc['region'] != null) c['region'] = rc['region'];
+          }
+        }
+        _sortChannelsByWatchedDesc(_localChannels);
+        _sortChannelsByWatchedDesc(channels);
+      });
+
+      _applyLocalFilterAndPagination();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1B5E20),
+          content: Text('✅ Import sync berhasil! (${remoteVids.length} video, ${remoteChs.length} channel)'),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: Colors.redAccent, content: Text('⚠️ Format JSON tidak valid: $e')),
+      );
+    }
+  }
+
   Future<void> _exportExcelCsv() async {
     if (!isStandaloneMode) {
       final url = Uri.parse('$baseUrl/api/channels/export-csv');
@@ -1119,15 +2044,21 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       return;
     }
     // Jika di HP (Mode Mandiri), tampilkan & salin teks CSV siap tempel ke Excel / Google Sheets
-    final buffer = StringBuffer('Channel ID,Nama Channel,Handle,Jumlah Video\n');
+    final buffer = StringBuffer(
+      'Channel ID,Nama Channel,Handle,Jumlah Video\n',
+    );
     for (final c in channels) {
-      buffer.writeln('${c['channel_id']},"${c['title']}",${c['handle'] ?? ''},${c['video_count'] ?? 0}');
+      buffer.writeln(
+        '${c['channel_id']},"${c['title']}",${c['handle'] ?? ''},${c['video_count'] ?? 0}',
+      );
     }
     await Clipboard.setData(ClipboardData(text: buffer.toString()));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Data CSV berhasil disalin ke Clipboard! Siap ditempel (Paste) ke Excel / Google Sheets.'),
+        content: Text(
+          'Data CSV berhasil disalin ke Clipboard! Siap ditempel (Paste) ke Excel / Google Sheets.',
+        ),
       ),
     );
   }
@@ -1185,14 +2116,20 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                                 });
                                 try {
                                   if (isStandaloneMode) {
-                                    await _standaloneAddAndSyncChannel(handleCtrl.text);
+                                    await _standaloneAddAndSyncChannel(
+                                      handleCtrl.text,
+                                    );
                                     if (ctx.mounted) Navigator.pop(ctx);
                                     _applyLocalFilterAndPagination();
                                   } else {
                                     final res = await http.post(
                                       Uri.parse('$baseUrl/api/channels'),
-                                      headers: {'Content-Type': 'application/json'},
-                                      body: jsonEncode({'identifier': handleCtrl.text}),
+                                      headers: {
+                                        'Content-Type': 'application/json',
+                                      },
+                                      body: jsonEncode({
+                                        'identifier': handleCtrl.text,
+                                      }),
                                     );
                                     if (res.statusCode == 200) {
                                       if (ctx.mounted) Navigator.pop(ctx);
@@ -1200,14 +2137,19 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                                     } else {
                                       final err = jsonDecode(res.body);
                                       setModalState(() {
-                                        modalError = err['detail'] ?? 'Gagal menambah channel';
+                                        modalError =
+                                            err['detail'] ??
+                                            'Gagal menambah channel';
                                         busy = false;
                                       });
                                     }
                                   }
                                 } catch (e) {
                                   setModalState(() {
-                                    modalError = e.toString().replaceAll('Exception: ', '');
+                                    modalError = e.toString().replaceAll(
+                                      'Exception: ',
+                                      '',
+                                    );
                                     busy = false;
                                   });
                                 }
@@ -1231,7 +2173,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     controller: csvCtrl,
                     maxLines: 5,
                     decoration: const InputDecoration(
-                      hintText: '@FajrulFx\n@FerryIrwandi\n@RadityaDika\natau UCxxxx,https://...,Nama Channel',
+                      hintText:
+                          '@FajrulFx\n@FerryIrwandi\n@RadityaDika\natau UCxxxx,https://...,Nama Channel',
                       filled: true,
                       fillColor: Color(0xFF121212),
                       border: OutlineInputBorder(),
@@ -1239,7 +2182,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   ),
                   if (modalError != null) ...[
                     const SizedBox(height: 12),
-                    Text(modalError!, style: const TextStyle(color: Colors.redAccent)),
+                    Text(
+                      modalError!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
                   ],
                 ],
               ),
@@ -1268,7 +2214,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           if (cols[0].startsWith('UC') && cols.length >= 3) {
                             final cid = cols[0].trim();
                             final title = cols[2].trim();
-                            _localChannels.removeWhere((c) => c['channel_id'] == cid);
+                            _localChannels.removeWhere(
+                              (c) => c['channel_id'] == cid,
+                            );
                             _localChannels.add({
                               'channel_id': cid,
                               'title': title,
@@ -1323,7 +2271,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModalState) => AlertDialog(
           backgroundColor: const Color(0xFF212121),
-          title: const Text('Pengaturan API YouTube (Gratis) & Mode Mandiri HP'),
+          title: const Text(
+            'Pengaturan API YouTube (Gratis) & Mode Mandiri HP',
+          ),
           content: SizedBox(
             width: 540,
             child: SingleChildScrollView(
@@ -1334,13 +2284,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: isStandaloneMode ? const Color(0xFF1B3B2B) : const Color(0xFF1A2B3C),
+                      color: isStandaloneMode
+                          ? const Color(0xFF1B3B2B)
+                          : const Color(0xFF1A2B3C),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(
                       children: [
                         Icon(
-                          isStandaloneMode ? Icons.phone_android : Icons.computer,
+                          isStandaloneMode
+                              ? Icons.phone_android
+                              : Icons.computer,
                           color: Colors.greenAccent,
                         ),
                         const SizedBox(width: 10),
@@ -1349,7 +2303,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                             isStandaloneMode
                                 ? 'Mode Mandiri Aktif: Aplikasi jalan sendiri langsung di HP/Perangkat tanpa butuh Backend Python!'
                                 : 'Mode Terhubung Backend Python ($baseUrl)',
-                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],
@@ -1368,7 +2325,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       children: [
                         Text(
                           '💡 Cara Dapat YouTube API Key Gratis (1 Menit, Rp 0):',
-                          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amberAccent),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amberAccent,
+                          ),
                         ),
                         SizedBox(height: 4),
                         Text(
@@ -1430,7 +2390,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   ),
                   if (statusMsg != null) ...[
                     const SizedBox(height: 12),
-                    Text(statusMsg!, style: const TextStyle(color: Colors.greenAccent)),
+                    Text(
+                      statusMsg!,
+                      style: const TextStyle(color: Colors.greenAccent),
+                    ),
                   ],
                 ],
               ),
@@ -1450,7 +2413,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 if (ctx.mounted) Navigator.pop(ctx);
                 _refreshAll();
               },
-              child: const Text('Hapus Data Demo', style: TextStyle(color: Colors.orangeAccent)),
+              child: const Text(
+                'Hapus Data Demo',
+                style: TextStyle(color: Colors.orangeAccent),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -1472,7 +2438,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       });
                       if (!isStandaloneMode) {
                         try {
-                          if (localApiKey.isNotEmpty || localOauthToken.isNotEmpty) {
+                          if (localApiKey.isNotEmpty ||
+                              localOauthToken.isNotEmpty) {
                             await http.post(
                               Uri.parse('$baseUrl/api/settings'),
                               headers: {'Content-Type': 'application/json'},
@@ -1486,7 +2453,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                             Uri.parse('$baseUrl/api/sync'),
                             headers: {'Content-Type': 'application/json'},
                             body: jsonEncode({
-                              'import_mode': localOauthToken.isNotEmpty ? 'subscriptions' : 'none',
+                              'import_mode': localOauthToken.isNotEmpty
+                                  ? 'subscriptions'
+                                  : 'none',
                               'years_back': 4,
                             }),
                           );
@@ -1505,7 +2474,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 backgroundColor: const Color(0xFFFF0033),
                 foregroundColor: Colors.white,
               ),
-              child: Text(syncing ? 'Menyinkronkan...' : 'Simpan & Sync Sekarang'),
+              child: Text(
+                syncing ? 'Menyinkronkan...' : 'Simpan & Sync Sekarang',
+              ),
             ),
           ],
         ),
@@ -1517,8 +2488,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final nextMode = sidebarMode == 'full'
         ? 'mini'
         : sidebarMode == 'mini'
-            ? 'hidden'
-            : 'full';
+        ? 'hidden'
+        : 'full';
     setState(() => sidebarMode = nextMode);
     _saveUiPreferences(newSidebarMode: nextMode);
   }
@@ -1536,13 +2507,18 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       if (isMobileScreen && sidebarMode == 'full') {
         sidebarMode = 'hidden';
       }
-      limit = (savedLimit == 25 || savedLimit == 50 || savedLimit == 100) ? savedLimit : 25;
+      limit = (savedLimit == 25 || savedLimit == 50 || savedLimit == 100)
+          ? savedLimit
+          : 25;
       currentPage = 1;
     });
     _fetchVideos();
   }
 
-  Widget _buildSearchInputBox({double height = 40, EdgeInsetsGeometry? margin}) {
+  Widget _buildSearchInputBox({
+    double height = 40,
+    EdgeInsetsGeometry? margin,
+  }) {
     return Container(
       height: height,
       margin: margin,
@@ -1627,18 +2603,28 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   Row(
                     children: [
                       IconButton(
-                        tooltip: 'Ubah Ukuran Sidebar (Penuh / Mini Ikon / Sembunyi)',
+                        tooltip:
+                            'Ubah Ukuran Sidebar (Penuh / Mini Ikon / Sembunyi)',
                         icon: const Icon(Icons.menu, color: Colors.white),
-                        visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                        visualDensity: isMobile
+                            ? VisualDensity.compact
+                            : VisualDensity.standard,
                         onPressed: _cycleSidebarMode,
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFF0033),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       if (!isCompactHeader)
@@ -1646,7 +2632,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           padding: EdgeInsets.only(right: 12),
                           child: Text(
                             'YouTube Follower',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: -0.5),
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.5,
+                            ),
                           ),
                         ),
                       if (!isMobile)
@@ -1691,50 +2681,112 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                                 ),
                               )
                             : Icon(
-                                refreshReadyGreen ? Icons.check_circle : Icons.refresh,
+                                refreshReadyGreen
+                                    ? Icons.check_circle
+                                    : Icons.refresh,
                                 size: 17,
                               ),
                         label: Text(
                           refreshingYouTube
-                              ? (screenWidth < 600 ? '$refreshProgress%' : 'Sync $refreshProgress%')
+                              ? (screenWidth < 600
+                                    ? '$refreshProgress%'
+                                    : 'Sync $refreshProgress%')
                               : refreshReadyGreen
-                                  ? (screenWidth < 600 ? '100% Siap' : 'Refresh YouTube (100%)')
-                                  : (screenWidth < 600 ? 'Refresh' : 'Refresh YouTube'),
+                              ? (screenWidth < 600
+                                    ? '100% Siap'
+                                    : 'Refresh YouTube (100%)')
+                              : (screenWidth < 600
+                                    ? 'Refresh'
+                                    : 'Refresh YouTube'),
                           style: TextStyle(fontSize: isMobile ? 12.5 : 13.5),
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: refreshReadyGreen
-                              ? const Color(0xFF2E7D32) // HIJAU saat 100% selesai sync
-                              : const Color(0xFFFF0033), // MERAH saat belum refresh / sedang berjalan
+                              ? const Color(
+                                  0xFF2E7D32,
+                                ) // HIJAU saat 100% selesai sync
+                              : const Color(
+                                  0xFFFF0033,
+                                ), // MERAH saat belum refresh / sedang berjalan
                           foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 12, vertical: 8),
-                          visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isMobile ? 10 : 12,
+                            vertical: 8,
+                          ),
+                          visualDensity: isMobile
+                              ? VisualDensity.compact
+                              : VisualDensity.standard,
                         ),
                       ),
                       SizedBox(width: isMobile ? 2 : 6),
                       if (!isCompactHeader) ...[
                         OutlinedButton.icon(
-                          onPressed: _exportExcelCsv,
-                          icon: const Icon(Icons.table_view, size: 18, color: Colors.greenAccent),
-                          label: const Text('Export Excel/CSV', style: TextStyle(color: Colors.white)),
+                          onPressed: _showUsbSyncDialog,
+                          icon: const Icon(
+                            Icons.usb,
+                            size: 18,
+                            color: Colors.cyanAccent,
+                          ),
+                          label: Text(
+                            _isHpDevice ? 'Sync Laptop' : 'Sync HP (USB)',
+                            style: const TextStyle(color: Colors.white),
+                          ),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Color(0xFF303030)),
                             backgroundColor: const Color(0xFF222222),
                           ),
                         ),
                         const SizedBox(width: 6),
-                      ] else
+                        OutlinedButton.icon(
+                          onPressed: _exportExcelCsv,
+                          icon: const Icon(
+                            Icons.table_view,
+                            size: 18,
+                            color: Colors.greenAccent,
+                          ),
+                          label: const Text(
+                            'Export Excel/CSV',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFF303030)),
+                            backgroundColor: const Color(0xFF222222),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ] else ...[
+                        IconButton(
+                          tooltip: 'Sync USB (HP ⇄ Laptop)',
+                          visualDensity: isMobile
+                              ? VisualDensity.compact
+                              : VisualDensity.standard,
+                          onPressed: _showUsbSyncDialog,
+                          icon: const Icon(
+                            Icons.usb,
+                            color: Colors.cyanAccent,
+                            size: 20,
+                          ),
+                        ),
                         IconButton(
                           tooltip: 'Export Excel/CSV',
-                          visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                          visualDensity: isMobile
+                              ? VisualDensity.compact
+                              : VisualDensity.standard,
                           onPressed: _exportExcelCsv,
-                          icon: const Icon(Icons.table_view, color: Colors.greenAccent, size: 20),
+                          icon: const Icon(
+                            Icons.table_view,
+                            color: Colors.greenAccent,
+                            size: 20,
+                          ),
                         ),
+                      ],
                       if (!isMobile)
                         ElevatedButton.icon(
                           onPressed: _showAddChannelModal,
                           icon: const Icon(Icons.add, size: 18),
-                          label: Text(isCompactHeader ? 'Channel' : 'Tambah Channel'),
+                          label: Text(
+                            isCompactHeader ? 'Channel' : 'Tambah Channel',
+                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF272727),
                             foregroundColor: Colors.white,
@@ -1745,16 +2797,24 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           tooltip: 'Tambah Channel',
                           visualDensity: VisualDensity.compact,
                           onPressed: _showAddChannelModal,
-                          icon: const Icon(Icons.person_add_alt_1, color: Colors.white, size: 20),
+                          icon: const Icon(
+                            Icons.person_add_alt_1,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                         ),
                       IconButton(
                         tooltip: 'Pengaturan API & Sync',
-                        visualDensity: isMobile ? VisualDensity.compact : VisualDensity.standard,
+                        visualDensity: isMobile
+                            ? VisualDensity.compact
+                            : VisualDensity.standard,
                         onPressed: _showApiSettingsModal,
                         icon: Icon(
                           Icons.settings,
                           size: isMobile ? 20 : 22,
-                          color: hasApiKey ? Colors.greenAccent : Colors.amberAccent,
+                          color: hasApiKey
+                              ? Colors.greenAccent
+                              : Colors.amberAccent,
                         ),
                       ),
                     ],
@@ -1787,7 +2847,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           ? const Center(child: CircularProgressIndicator())
                           : LayoutBuilder(
                               builder: (ctx, constraints) =>
-                                  _buildVideoGridWithPagination(constraints.maxWidth),
+                                  _buildVideoGridWithPagination(
+                                    constraints.maxWidth,
+                                  ),
                             ),
                     ),
                   ],
@@ -1831,7 +2893,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               Tooltip(
                 message: 'Lebarkan Sidebar',
                 child: IconButton(
-                  icon: const Icon(Icons.keyboard_double_arrow_right, color: Colors.white70),
+                  icon: const Icon(
+                    Icons.keyboard_double_arrow_right,
+                    color: Colors.white70,
+                  ),
                   onPressed: () {
                     setState(() => sidebarMode = 'full');
                     _saveUiPreferences(newSidebarMode: 'full');
@@ -1846,7 +2911,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     decoration: BoxDecoration(
-                      color: selectedChannelId.isEmpty ? const Color(0xFF272727) : Colors.transparent,
+                      color: selectedChannelId.isEmpty
+                          ? const Color(0xFF272727)
+                          : Colors.transparent,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Column(
@@ -1860,20 +2927,31 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 ),
               ),
               const Divider(color: Color(0xFF272727), height: 18),
-              ...channels.map((ch) {
+              ...channels.where((ch) {
+                if (selectedRegion != 'all') {
+                  return (ch['region'] ?? 'Nasional').toString() == selectedRegion;
+                }
+                return true;
+              }).map((ch) {
                 final cid = (ch['channel_id'] ?? '').toString();
                 final title = (ch['title'] ?? '').toString();
-                final watchedCount = int.tryParse((ch['watched_count'] ?? 0).toString()) ?? 0;
+                final reg = (ch['region'] ?? 'Nasional').toString();
+                final cHp = int.tryParse((ch['views_hp'] ?? 0).toString()) ?? 0;
+                final cLap = int.tryParse((ch['views_laptop'] ?? 0).toString()) ?? 0;
+                final watchedCount =
+                    int.tryParse((ch['views_total'] ?? ch['watched_count'] ?? 0).toString()) ?? (cHp + cLap);
                 final isSelected = selectedChannelId == cid;
                 return Tooltip(
-                  message: '$title ($watchedCount view)',
+                  message: '$title\nTotal: $watchedCount view (📱 HP: $cHp | 💻 Laptop: $cLap)\nWilayah: $reg',
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: () => _selectChannelTab(cid),
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       decoration: BoxDecoration(
-                        color: isSelected ? const Color(0xFF272727) : Colors.transparent,
+                        color: isSelected
+                            ? const Color(0xFF272727)
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Center(
@@ -1883,15 +2961,24 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                             CircleAvatar(
                               radius: 16,
                               backgroundColor: const Color(0xFF383838),
-                              backgroundImage: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
+                              backgroundImage:
+                                  (ch['thumbnail_url'] ?? '')
+                                      .toString()
+                                      .isNotEmpty
                                   ? NetworkImage(ch['thumbnail_url'])
                                   : null,
-                              onBackgroundImageError: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
+                              onBackgroundImageError:
+                                  (ch['thumbnail_url'] ?? '')
+                                      .toString()
+                                      .isNotEmpty
                                   ? (_, _) {}
                                   : null,
                               child: Text(
                                 title.isNotEmpty ? title[0] : '?',
-                                style: const TextStyle(fontSize: 11, color: Colors.white70),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white70,
+                                ),
                               ),
                             ),
                             if (watchedCount > 0)
@@ -1899,11 +2986,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                                 right: -4,
                                 bottom: -4,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF1E3A2F),
                                     borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: const Color(0xFF2E7D32), width: 0.8),
+                                    border: Border.all(
+                                      color: const Color(0xFF2E7D32),
+                                      width: 0.8,
+                                    ),
                                   ),
                                   child: Text(
                                     '$watchedCount',
@@ -1948,7 +3041,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 if (!forceFull)
                   IconButton(
                     tooltip: 'Kecilkan Sidebar (Mode Ikon)',
-                    icon: const Icon(Icons.keyboard_double_arrow_left, size: 20, color: Colors.white60),
+                    icon: const Icon(
+                      Icons.keyboard_double_arrow_left,
+                      size: 20,
+                      color: Colors.white60,
+                    ),
                     onPressed: () {
                       setState(() => sidebarMode = 'mini');
                       _saveUiPreferences(newSidebarMode: 'mini');
@@ -1964,69 +3061,119 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
             ),
-            ...channels.map((ch) {
+            ...channels.where((ch) {
+              if (selectedRegion != 'all') {
+                return (ch['region'] ?? 'Nasional').toString() == selectedRegion;
+              }
+              return true;
+            }).map((ch) {
               final cid = (ch['channel_id'] ?? '').toString();
               final title = (ch['title'] ?? '').toString();
-              final watchedCount = int.tryParse((ch['watched_count'] ?? 0).toString()) ?? 0;
+              final reg = (ch['region'] ?? 'Nasional').toString();
+              final cHp = int.tryParse((ch['views_hp'] ?? 0).toString()) ?? 0;
+              final cLap = int.tryParse((ch['views_laptop'] ?? 0).toString()) ?? 0;
+              final watchedCount =
+                  int.tryParse((ch['views_total'] ?? ch['watched_count'] ?? 0).toString()) ?? (cHp + cLap);
               final isSelected = selectedChannelId == cid;
-              return InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () => _selectChannelTab(cid),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: isSelected ? const Color(0xFF272727) : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 14,
-                        backgroundColor: const Color(0xFF383838),
-                        backgroundImage: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
-                            ? NetworkImage(ch['thumbnail_url'])
-                            : null,
-                        onBackgroundImageError: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
-                            ? (_, _) {}
-                            : null,
-                        child: Text(
-                          title.isNotEmpty ? title[0] : '?',
-                          style: const TextStyle(fontSize: 11, color: Colors.white70),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              return Tooltip(
+                message: '$title\nTotal: $watchedCount view (📱 HP: $cHp | 💻 Laptop: $cLap)\nWilayah: $reg',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _selectChannelTab(cid),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? const Color(0xFF272727)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 14,
+                          backgroundColor: const Color(0xFF383838),
+                          backgroundImage:
+                              (ch['thumbnail_url'] ?? '').toString().isNotEmpty
+                              ? NetworkImage(ch['thumbnail_url'])
+                              : null,
+                          onBackgroundImageError:
+                              (ch['thumbnail_url'] ?? '').toString().isNotEmpty
+                              ? (_, _) {}
+                              : null,
+                          child: Text(
+                            title.isNotEmpty ? title[0] : '?',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.white70,
+                            ),
                           ),
                         ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: watchedCount > 0 ? const Color(0xFF1E3A2F) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '$watchedCount',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: watchedCount > 0 ? FontWeight.bold : FontWeight.normal,
-                            color: watchedCount > 0 ? const Color(0xFF81C784) : Colors.white54,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                reg == 'Nasional' ? '🇮🇩' : '🌍',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ],
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: watchedCount > 0
+                                ? const Color(0xFF1E3A2F)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '$watchedCount',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: watchedCount > 0
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: watchedCount > 0
+                                  ? const Color(0xFF81C784)
+                                  : Colors.white54,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
             }),
             const Divider(color: Color(0xFF272727), height: 28),
+            _sidebarTile(
+              icon: Icons.usb,
+              title: 'Sync USB (HP ⇄ Laptop)',
+              selected: false,
+              onTap: _showUsbSyncDialog,
+            ),
             _sidebarTile(
               icon: Icons.download_for_offline_outlined,
               title: 'Export Excel/CSV',
@@ -2105,8 +3252,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   backgroundColor: isSidebarOpen
                       ? const Color(0xFFFF0033)
                       : selectedChannelId.isNotEmpty
-                          ? const Color(0xFF1E3A2F)
-                          : const Color(0xFF222222),
+                      ? const Color(0xFF1E3A2F)
+                      : const Color(0xFF222222),
                   foregroundColor: Colors.white,
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -2116,8 +3263,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       color: isSidebarOpen
                           ? const Color(0xFFFF4E4E)
                           : selectedChannelId.isNotEmpty
-                              ? const Color(0xFF2E7D32)
-                              : const Color(0xFF3A3A3A),
+                          ? const Color(0xFF2E7D32)
+                          : const Color(0xFF3A3A3A),
                     ),
                   ),
                 ),
@@ -2130,7 +3277,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   isSidebarOpen ? 'Tutup Channel' : activeChannelName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 onPressed: () {
                   final next = sidebarMode == 'full' ? 'hidden' : 'full';
@@ -2151,10 +3301,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   side: const BorderSide(color: Color(0xFF3A3A3A)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
                 onPressed: () => _selectChannelTab(''),
-                child: const Icon(Icons.home_filled, size: 19, color: Colors.white),
+                child: const Icon(
+                  Icons.home_filled,
+                  size: 19,
+                  color: Colors.white,
+                ),
               ),
             ),
           ],
@@ -2181,7 +3337,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   ),
                 ),
                 icon: Icon(
-                  filterMinimized ? Icons.tune : Icons.keyboard_arrow_up_rounded,
+                  filterMinimized
+                      ? Icons.tune
+                      : Icons.keyboard_arrow_up_rounded,
                   size: 19,
                   color: Colors.amberAccent,
                 ),
@@ -2215,7 +3373,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       ('month', 'Bulan Ini'),
       ('year', 'Tahun Ini'),
     ];
-    final isCustomYear = period.endsWith('y') && int.tryParse(period.substring(0, period.length - 1)) != null;
+    final isCustomYear =
+        period.endsWith('y') &&
+        int.tryParse(period.substring(0, period.length - 1)) != null;
 
     final sorts = [
       ('views', '🔥 View Terbanyak'),
@@ -2224,18 +3384,30 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     ];
 
     if (filterMinimized) {
-      final sortLabel = sorts.firstWhere((s) => s.$1 == sortBy, orElse: () => sorts.last).$2;
+      final sortLabel = sorts
+          .firstWhere((s) => s.$1 == sortBy, orElse: () => sorts.last)
+          .$2;
       final periodLabel = isCustomYear
           ? '${period.substring(0, period.length - 1)} Tahun Lalu'
-          : periods.firstWhere((p) => p.$1 == period, orElse: () => periods.first).$2;
+          : periods
+                .firstWhere((p) => p.$1 == period, orElse: () => periods.first)
+                .$2;
+      final regionLabel = selectedRegion == 'Nasional'
+          ? '🇮🇩 Nasional'
+          : (selectedRegion == 'Internasional'
+              ? '🌍 Internasional'
+              : '🌐 Semua Wilayah');
       return Container(
         color: const Color(0xFF0F0F0F),
-        padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16, vertical: isMobile ? 2 : 4),
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobile ? 12 : 16,
+          vertical: isMobile ? 2 : 4,
+        ),
         child: Row(
           children: [
             Expanded(
               child: Text(
-                '$sortLabel  •  $periodLabel  •  Durasi: ${_formatMinutesLabel(durationRange.start.round())} – ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}  •  $limit Video/Tab  •  Total: $totalVideos video',
+                '$sortLabel  •  $regionLabel  •  $periodLabel  •  Durasi: ${_formatMinutesLabel(durationRange.start.round())} – ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}  •  $limit Video/Tab  •  Total: $totalVideos video',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 12, color: Colors.white60),
@@ -2243,8 +3415,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             ),
             if (!isMobile)
               TextButton.icon(
-                icon: const Icon(Icons.expand_more, size: 18, color: Colors.amberAccent),
-                label: const Text('Buka Filter', style: TextStyle(fontSize: 12.5, color: Colors.amberAccent)),
+                icon: const Icon(
+                  Icons.expand_more,
+                  size: 18,
+                  color: Colors.amberAccent,
+                ),
+                label: const Text(
+                  'Buka Filter',
+                  style: TextStyle(fontSize: 12.5, color: Colors.amberAccent),
+                ),
                 onPressed: () {
                   setState(() => filterMinimized = false);
                   _saveUiPreferences(newFilterMinimized: false);
@@ -2258,7 +3437,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final row1Children = <Widget>[
       const Text(
         'Urutkan:',
-        style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.white70,
+          fontWeight: FontWeight.w600,
+        ),
       ),
       ...sorts.map((s) {
         final active = sortBy == s.$1;
@@ -2277,6 +3460,44 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               sortBy = s.$1;
               currentPage = 1;
             });
+            _saveUiPreferences();
+            _fetchVideos();
+          },
+        );
+      }),
+      const SizedBox(width: 8),
+      const Text(
+        'Wilayah:',
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.white70,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      ...[
+        ('all', '🌐 Semua'),
+        ('Nasional', '🇮🇩 Nasional'),
+        ('Internasional', '🌍 Internasional'),
+      ].map((reg) {
+        final active = selectedRegion == reg.$1;
+        return ChoiceChip(
+          label: Text(reg.$2),
+          selected: active,
+          selectedColor: reg.$1 == 'Nasional'
+              ? const Color(0xFFD32F2F)
+              : (reg.$1 == 'Internasional' ? const Color(0xFF1976D2) : Colors.white),
+          backgroundColor: const Color(0xFF272727),
+          labelStyle: TextStyle(
+            color: active ? (reg.$1 == 'all' ? Colors.black : Colors.white) : Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+          onSelected: (_) {
+            setState(() {
+              selectedRegion = reg.$1;
+              currentPage = 1;
+            });
+            _saveUiPreferences();
             _fetchVideos();
           },
         );
@@ -2284,7 +3505,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       const SizedBox(width: 8),
       const Text(
         'Tampil per Tab (Permanen):',
-        style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.white70,
+          fontWeight: FontWeight.w600,
+        ),
       ),
       ...[25, 50, 100].map((val) {
         final active = limit == val;
@@ -2321,8 +3546,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             side: const BorderSide(color: Color(0xFF383838)),
           ),
-          icon: const Icon(Icons.expand_less, size: 16, color: Colors.amberAccent),
-          label: const Text('Minimal', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
+          icon: const Icon(
+            Icons.expand_less,
+            size: 16,
+            color: Colors.amberAccent,
+          ),
+          label: const Text(
+            'Minimal',
+            style: TextStyle(fontSize: 12, color: Colors.amberAccent),
+          ),
           onPressed: () {
             setState(() => filterMinimized = true);
             _saveUiPreferences(newFilterMinimized: true);
@@ -2358,10 +3590,14 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
-          color: isCustomYear ? const Color(0xFF3A1818) : const Color(0xFF272727),
+          color: isCustomYear
+              ? const Color(0xFF3A1818)
+              : const Color(0xFF272727),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isCustomYear ? const Color(0xFFFF0033) : const Color(0xFF444444),
+            color: isCustomYear
+                ? const Color(0xFFFF0033)
+                : const Color(0xFF444444),
             width: isCustomYear ? 1.5 : 1.0,
           ),
         ),
@@ -2422,7 +3658,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
     return Container(
       color: const Color(0xFF0F0F0F),
-      padding: EdgeInsets.fromLTRB(isMobile ? 10 : 16, 4, isMobile ? 10 : 16, 8),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 10 : 16,
+        4,
+        isMobile ? 10 : 16,
+        8,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2476,13 +3717,21 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.timer_outlined, size: 18, color: Color(0xFFFF0033)),
+                const Icon(
+                  Icons.timer_outlined,
+                  size: 18,
+                  color: Color(0xFFFF0033),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   isMobile
                       ? _formatMinutesLabel(durationRange.start.round())
                       : 'Durasi: Minimal ${_formatMinutesLabel(durationRange.start.round())}',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
                 Expanded(
                   child: SliderTheme(
@@ -2491,7 +3740,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       inactiveTrackColor: const Color(0xFF383838),
                       thumbColor: Colors.white,
                       overlayColor: const Color(0x33FF0033),
-                      rangeThumbShape: const RoundRangeSliderThumbShape(enabledThumbRadius: 9),
+                      rangeThumbShape: const RoundRangeSliderThumbShape(
+                        enabledThumbRadius: 9,
+                      ),
                     ),
                     child: RangeSlider(
                       values: durationRange,
@@ -2500,7 +3751,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       divisions: 120,
                       labels: RangeLabels(
                         _formatMinutesLabel(durationRange.start.round()),
-                        _formatMinutesLabel(durationRange.end.round(), isMax: true),
+                        _formatMinutesLabel(
+                          durationRange.end.round(),
+                          isMax: true,
+                        ),
                       ),
                       onChanged: (RangeValues values) {
                         setState(() {
@@ -2519,16 +3773,24 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 Text(
                   isMobile
                       ? (durationRange.end.round() >= 120
-                          ? '2 Jam+'
-                          : _formatMinutesLabel(durationRange.end.round()))
+                            ? '2 Jam+'
+                            : _formatMinutesLabel(durationRange.end.round()))
                       : 'Maksimal ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
-                if (durationRange.start.round() > 0 || durationRange.end.round() < 120) ...[
+                if (durationRange.start.round() > 0 ||
+                    durationRange.end.round() < 120) ...[
                   const SizedBox(width: 8),
                   TextButton(
                     style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -2539,7 +3801,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       });
                       _fetchVideos();
                     },
-                    child: const Text('Reset', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
+                    child: const Text(
+                      'Reset',
+                      style: TextStyle(fontSize: 12, color: Colors.amberAccent),
+                    ),
                   ),
                 ],
               ],
@@ -2565,7 +3830,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         children: [
           const Text(
             'Navigasi Tab:',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white70),
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+              color: Colors.white70,
+            ),
           ),
           // Tombol Kiri (Sebelumnya)
           ElevatedButton.icon(
@@ -2599,11 +3868,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   padding: EdgeInsets.only(left: 8),
                   child: Icon(Icons.arrow_drop_down, color: Colors.white),
                 ),
-                style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
                 items: List.generate(totalPages, (idx) {
                   final pageNum = idx + 1;
                   final startItem = idx * limit + 1;
-                  final endItem = ((idx + 1) * limit > totalVideos) ? totalVideos : (idx + 1) * limit;
+                  final endItem = ((idx + 1) * limit > totalVideos)
+                      ? totalVideos
+                      : (idx + 1) * limit;
                   return DropdownMenuItem<int>(
                     value: pageNum,
                     child: Text('Tab $pageNum ($startItem–$endItem)'),
@@ -2672,13 +3947,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               mainAxisSpacing: 22,
               childAspectRatio: 1.12,
             ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final v = videos[index];
-                return _buildVideoCard(v);
-              },
-              childCount: videos.length,
-            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final v = videos[index];
+              return _buildVideoCard(v);
+            }, childCount: videos.length),
           ),
         ),
         SliverToBoxAdapter(child: _buildPaginationTabsBar()),
@@ -2697,7 +3969,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final likes = (v['like_count'] ?? 0) as int;
     final publishedAt = (v['published_at'] ?? '').toString();
     final duration = (v['duration'] ?? '').toString();
-    final watchedCount = _getCreatorWatchedCount(channelId, v);
+    final vHp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
+    final vLap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
+    final vTot = int.tryParse((v['views_total'] ?? 0).toString()) ?? (vHp + vLap);
+    final creatorWatched = _getCreatorWatchedCount(channelId, v);
+    final watchedCount = vTot > 0 ? vTot : creatorWatched;
+    final videoRegion = (v['region'] ?? 'Nasional').toString();
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -2716,7 +3993,13 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) => Container(
                       color: const Color(0xFF272727),
-                      child: const Center(child: Icon(Icons.ondemand_video, size: 42, color: Colors.white38)),
+                      child: const Center(
+                        child: Icon(
+                          Icons.ondemand_video,
+                          size: 42,
+                          color: Colors.white38,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -2725,7 +4008,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     right: 8,
                     bottom: 8,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withValues(alpha: 0.85),
                         borderRadius: BorderRadius.circular(4),
@@ -2750,8 +4036,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: const Color(0xFF383838),
-                backgroundImage: channelThumb.isNotEmpty ? NetworkImage(channelThumb) : null,
-                onBackgroundImageError: channelThumb.isNotEmpty ? (_, _) {} : null,
+                backgroundImage: channelThumb.isNotEmpty
+                    ? NetworkImage(channelThumb)
+                    : null,
+                onBackgroundImageError: channelThumb.isNotEmpty
+                    ? (_, _) {}
+                    : null,
                 child: Text(
                   channelTitle.isNotEmpty ? channelTitle[0] : '?',
                   style: const TextStyle(fontSize: 13, color: Colors.white70),
@@ -2778,7 +4068,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       children: [
                         Flexible(
                           child: Text(
-                            channelTitle,
+                            '$channelTitle ${videoRegion == "Nasional" ? "🇮🇩" : "🌍"}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -2788,7 +4078,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        const Icon(Icons.check_circle, size: 13, color: Color(0xFFAAAAAA)),
+                        const Icon(
+                          Icons.check_circle,
+                          size: 13,
+                          color: Color(0xFFAAAAAA),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 3),
@@ -2799,16 +4093,37 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       children: [
                         Text(
                           '${_formatCompactNumber(views)} views',
-                          style: const TextStyle(fontSize: 12.5, color: Color(0xFFAAAAAA)),
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            color: Color(0xFFAAAAAA),
+                          ),
                         ),
-                        const Text('•', style: TextStyle(fontSize: 12.5, color: Color(0xFFAAAAAA))),
+                        const Text(
+                          '•',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: Color(0xFFAAAAAA),
+                          ),
+                        ),
                         Text(
                           _formatTimeAgo(publishedAt),
-                          style: const TextStyle(fontSize: 12.5, color: Color(0xFFAAAAAA)),
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            color: Color(0xFFAAAAAA),
+                          ),
                         ),
-                        const Text('•', style: TextStyle(fontSize: 12.5, color: Color(0xFFAAAAAA))),
+                        const Text(
+                          '•',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: Color(0xFFAAAAAA),
+                          ),
+                        ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1.5,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFF272727),
                             borderRadius: BorderRadius.circular(4),
@@ -2822,21 +4137,35 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                             ),
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                          decoration: BoxDecoration(
-                            color: watchedCount > 0 ? const Color(0xFF1E3A2F) : const Color(0xFF272727),
-                            borderRadius: BorderRadius.circular(4),
-                            border: watchedCount > 0
-                                ? Border.all(color: const Color(0xFF2E7D32), width: 0.8)
-                                : null,
-                          ),
-                          child: Text(
-                            '▶ $watchedCount view',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: watchedCount > 0 ? const Color(0xFF81C784) : Colors.white70,
-                              fontWeight: FontWeight.w600,
+                        Tooltip(
+                          message:
+                              'Total: $watchedCount view\n📱 HP: $vHp view | 💻 Laptop: $vLap view\nWilayah: $videoRegion',
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1.5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: watchedCount > 0
+                                  ? const Color(0xFF1E3A2F)
+                                  : const Color(0xFF272727),
+                              borderRadius: BorderRadius.circular(4),
+                              border: watchedCount > 0
+                                  ? Border.all(
+                                      color: const Color(0xFF2E7D32),
+                                      width: 0.8,
+                                    )
+                                  : null,
+                            ),
+                            child: Text(
+                              '▶ $watchedCount view',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: watchedCount > 0
+                                    ? const Color(0xFF81C784)
+                                    : Colors.white70,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -2847,7 +4176,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               ),
               // Titik 3 (⋮) di pojok kanan bawah kartu video (Unsubscribe di dalam titik 3 dengan tekan & tahan beberapa detik)
               PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, size: 20, color: Colors.white70),
+                icon: const Icon(
+                  Icons.more_vert,
+                  size: 20,
+                  color: Colors.white70,
+                ),
                 color: const Color(0xFF282828),
                 tooltip: 'Opsi Creator',
                 onSelected: (value) {
@@ -2863,11 +4196,13 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 },
                 itemBuilder: (popupCtx) => [
                   PopupMenuItem<String>(
-                    enabled: false, // Agar klik biasa tidak langsung menutup menu; harus ditahan (hold) beberapa detik
+                    enabled:
+                        false, // Agar klik biasa tidak langsung menutup menu; harus ditahan (hold) beberapa detik
                     padding: EdgeInsets.zero,
                     child: _HoldToUnsubscribeMenuItem(
                       channelTitle: channelTitle,
-                      fastModeActive: skipUnsubscribeConfirmUntil != null &&
+                      fastModeActive:
+                          skipUnsubscribeConfirmUntil != null &&
                           DateTime.now().isBefore(skipUnsubscribeConfirmUntil!),
                       onHoldCompleted: () {
                         Navigator.of(popupCtx).pop();
@@ -2879,9 +4214,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     value: 'filter_channel',
                     child: Row(
                       children: [
-                        const Icon(Icons.video_library_outlined, color: Colors.white70, size: 18),
+                        const Icon(
+                          Icons.video_library_outlined,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
                         const SizedBox(width: 10),
-                        Expanded(child: Text('Lihat Semua Video $channelTitle')),
+                        Expanded(
+                          child: Text('Lihat Semua Video $channelTitle'),
+                        ),
                       ],
                     ),
                   ),
@@ -2889,7 +4230,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     value: 'open_yt',
                     child: Row(
                       children: [
-                        Icon(Icons.open_in_new, color: Colors.white70, size: 18),
+                        Icon(
+                          Icons.open_in_new,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
                         SizedBox(width: 10),
                         Text('Tonton di YouTube'),
                       ],
@@ -2917,10 +4262,12 @@ class _HoldToUnsubscribeMenuItem extends StatefulWidget {
   });
 
   @override
-  State<_HoldToUnsubscribeMenuItem> createState() => _HoldToUnsubscribeMenuItemState();
+  State<_HoldToUnsubscribeMenuItem> createState() =>
+      _HoldToUnsubscribeMenuItemState();
 }
 
-class _HoldToUnsubscribeMenuItemState extends State<_HoldToUnsubscribeMenuItem> {
+class _HoldToUnsubscribeMenuItemState
+    extends State<_HoldToUnsubscribeMenuItem> {
   Timer? _holdTimer;
   double _holdProgress = 0.0; // 0.0 .. 1.0 (1 detik)
   bool _holding = false;
@@ -3015,7 +4362,11 @@ class _HoldToUnsubscribeMenuItemState extends State<_HoldToUnsubscribeMenuItem> 
                             ],
                           ),
                         )
-                      : const Icon(Icons.person_remove, color: Color(0xFFFF4E4E), size: 18),
+                      : const Icon(
+                          Icons.person_remove,
+                          color: Color(0xFFFF4E4E),
+                          size: 18,
+                        ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -3034,8 +4385,8 @@ class _HoldToUnsubscribeMenuItemState extends State<_HoldToUnsubscribeMenuItem> 
                 _holding
                     ? 'Tahan terus... ($pct%)'
                     : (widget.fastModeActive
-                        ? '⚡ Tahan 1 detik untuk langsung Unsubscribe'
-                        : '👆 Tahan 1 detik untuk Unsubscribe'),
+                          ? '⚡ Tahan 1 detik untuk langsung Unsubscribe'
+                          : '👆 Tahan 1 detik untuk Unsubscribe'),
                 style: TextStyle(
                   fontSize: 11,
                   color: _holding ? Colors.amberAccent : Colors.white54,

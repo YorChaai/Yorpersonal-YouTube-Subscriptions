@@ -1,9 +1,43 @@
+import json
 import math
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "youtube_personal.db"
+
+ID_KEYWORDS = {
+    "indonesia", "nusantara", "sejarah", "sarjana", "bicara", "cerita", "horor", "tongkrongan",
+    "berkelas", "revolusi", "santai", "kepo", "terang", "menit", "hukum", "politik", "opini",
+    "kompas", "detik", "tribun", "liputan", "tempo", "kumparan", "merdeka", "suara", "tvone",
+    "inews", "trans7", "antv", "sctv", "mnc", "rcti", "netmediatama", "narasi", "mojok",
+    "asumsi", "tirto", "katadata", "idntimes", "fajrul", "ferry", "raditya", "radit", "malaka",
+    "irwandi", "dea", "leonardo", "eno", "raymond", "sumargo", "curhat", "timothy", "ronald",
+    "corbuzier", "yahya", "milyhya", "hapsah", "tretan", "choki", "pandji", "standup",
+    "ngobrol", "bocah", "kabar", "warta", "sinema", "jawa", "sunda", "bali", "jakarta",
+    "bandung", "jogja", "surabaya", "indo", "indonesian", "film", "misteri", "hiburan",
+    "belajar", "resep", "kuliner", "makan", "masak", "dapur", "anak", "islam", "dakwah",
+    "ustadz", "kajian", "gus", "habib", "santri", "pesantren", "berita", "fakta",
+    "gadgetin", "jagat", "sobat", "ruang", "bumi", "kreatif", "karya",
+}
+
+
+def classify_region(title: str, handle: str = "", country: str = "", default_lang: str = "") -> str:
+    cntry = (country or "").strip().upper()
+    lang = (default_lang or "").strip().lower()
+    if cntry == "ID" or lang.startswith("id"):
+        return "Nasional"
+    text = f"{title or ''} {handle or ''}".lower()
+    words = re.findall(r"[a-zA-Z0-9]+", text)
+    if any(w in ID_KEYWORDS for w in words):
+        return "Nasional"
+    h_low = (handle or "").lower()
+    if h_low.endswith("id") or "_id" in h_low or ".id" in h_low or "indonesia" in text:
+        return "Nasional"
+    if cntry and cntry != "ID":
+        return "Internasional"
+    return "Internasional"
 
 
 def get_conn() -> sqlite3.Connection:
@@ -68,19 +102,39 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_videos_channel ON videos(channel_id);
             """
         )
-        # Tambahkan kolom yt_video_count, subscriber_count, & watched_count jika belum ada
-        cols = [r["name"] for r in conn.execute("PRAGMA table_info(channels)").fetchall()]
-        if "yt_video_count" not in cols:
-            conn.execute("ALTER TABLE channels ADD COLUMN yt_video_count INTEGER DEFAULT 0")
-        if "subscriber_count" not in cols:
-            conn.execute("ALTER TABLE channels ADD COLUMN subscriber_count INTEGER DEFAULT 0")
-        if "watched_count" not in cols:
-            conn.execute("ALTER TABLE channels ADD COLUMN watched_count INTEGER DEFAULT 0")
+        for alter_sql in (
+            "ALTER TABLE channels ADD COLUMN yt_video_count INTEGER DEFAULT 0",
+            "ALTER TABLE channels ADD COLUMN subscriber_count INTEGER DEFAULT 0",
+            "ALTER TABLE channels ADD COLUMN watched_count INTEGER DEFAULT 0",
+            "ALTER TABLE channels ADD COLUMN region TEXT DEFAULT 'Nasional'",
+            "ALTER TABLE channels ADD COLUMN status TEXT DEFAULT 'subscribed'",
+            "ALTER TABLE channels ADD COLUMN views_hp INTEGER DEFAULT 0",
+            "ALTER TABLE channels ADD COLUMN views_laptop INTEGER DEFAULT 0",
+            "ALTER TABLE channels ADD COLUMN views_total INTEGER GENERATED ALWAYS AS (COALESCE(views_hp, 0) + COALESCE(views_laptop, 0)) VIRTUAL",
+            "ALTER TABLE channels ADD COLUMN updated_at TEXT DEFAULT ''",
+            "ALTER TABLE videos ADD COLUMN duration_seconds INTEGER DEFAULT 0",
+            "ALTER TABLE videos ADD COLUMN region TEXT DEFAULT 'Nasional'",
+            "ALTER TABLE videos ADD COLUMN views_hp INTEGER DEFAULT 0",
+            "ALTER TABLE videos ADD COLUMN views_laptop INTEGER DEFAULT 0",
+            "ALTER TABLE videos ADD COLUMN views_total INTEGER GENERATED ALWAYS AS (COALESCE(views_hp, 0) + COALESCE(views_laptop, 0)) VIRTUAL",
+            "ALTER TABLE videos ADD COLUMN updated_at TEXT DEFAULT ''",
+        ):
+            try:
+                conn.execute(alter_sql)
+            except sqlite3.OperationalError:
+                pass
 
-        v_cols = [r["name"] for r in conn.execute("PRAGMA table_info(videos)").fetchall()]
-        if "duration_seconds" not in v_cols:
-            conn.execute("ALTER TABLE videos ADD COLUMN duration_seconds INTEGER DEFAULT 0")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_duration ON videos(duration_seconds)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_region ON videos(region)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_channels_region ON channels(region)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_channels_status ON channels(status)")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn.execute("UPDATE channels SET updated_at = ? WHERE updated_at IS NULL OR updated_at = ''", (now_iso,))
+        conn.execute("UPDATE videos SET updated_at = ? WHERE updated_at IS NULL OR updated_at = ''", (now_iso,))
+        conn.execute("UPDATE channels SET status = 'subscribed' WHERE status IS NULL OR status = ''")
+        conn.execute("UPDATE channels SET views_laptop = watched_count WHERE watched_count > 0 AND views_laptop = 0 AND views_hp = 0")
+
         # Backfill duration_seconds untuk semua video yang sudah ada di database
         rows = conn.execute("SELECT video_id, duration FROM videos WHERE duration_seconds = 0 AND duration != ''").fetchall()
         if rows:
@@ -111,29 +165,53 @@ def upsert_channel(
     thumbnail_url: str = "",
     uploads_playlist_id: str = "",
     source: str = "manual",
+    region: str = "",
+    country: str = "",
+    status: str = "subscribed",
+    force_subscribe: bool = False,
 ) -> None:
     if not uploads_playlist_id and channel_id.startswith("UC"):
         uploads_playlist_id = "UU" + channel_id[2:]
     elif not uploads_playlist_id:
         uploads_playlist_id = channel_id
+    if not region:
+        region = classify_region(title, handle, country=country)
     now_iso = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO channels(channel_id, title, handle, thumbnail_url, uploads_playlist_id, source, added_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(channel_id) DO UPDATE SET
-                title=excluded.title,
-                handle=CASE WHEN excluded.handle != '' THEN excluded.handle ELSE channels.handle END,
-                thumbnail_url=CASE WHEN excluded.thumbnail_url != '' THEN excluded.thumbnail_url ELSE channels.thumbnail_url END,
-                uploads_playlist_id=excluded.uploads_playlist_id
-            """,
-            (channel_id, title, handle, thumbnail_url, uploads_playlist_id, source, now_iso),
-        )
+        if force_subscribe:
+            conn.execute(
+                """
+                INSERT INTO channels(channel_id, title, handle, thumbnail_url, uploads_playlist_id, source, added_at, region, status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'subscribed', ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    title=excluded.title,
+                    handle=CASE WHEN excluded.handle != '' THEN excluded.handle ELSE channels.handle END,
+                    thumbnail_url=CASE WHEN excluded.thumbnail_url != '' THEN excluded.thumbnail_url ELSE channels.thumbnail_url END,
+                    uploads_playlist_id=excluded.uploads_playlist_id,
+                    region=CASE WHEN excluded.region != '' THEN excluded.region ELSE channels.region END,
+                    status='subscribed',
+                    updated_at=excluded.updated_at
+                """,
+                (channel_id, title, handle, thumbnail_url, uploads_playlist_id, source, now_iso, region, now_iso),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO channels(channel_id, title, handle, thumbnail_url, uploads_playlist_id, source, added_at, region, status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    title=excluded.title,
+                    handle=CASE WHEN excluded.handle != '' THEN excluded.handle ELSE channels.handle END,
+                    thumbnail_url=CASE WHEN excluded.thumbnail_url != '' THEN excluded.thumbnail_url ELSE channels.thumbnail_url END,
+                    uploads_playlist_id=excluded.uploads_playlist_id,
+                    region=CASE WHEN channels.region IS NULL OR channels.region = '' THEN excluded.region ELSE channels.region END
+                """,
+                (channel_id, title, handle, thumbnail_url, uploads_playlist_id, source, now_iso, region, status, now_iso),
+            )
 
 
 def delete_channel(channel_id: str) -> None:
-    import json
+    now_iso = datetime.now(timezone.utc).isoformat()
     raw = get_setting("unsubscribed_map_json", "{}")
     try:
         unsub_map = json.loads(raw)
@@ -141,11 +219,56 @@ def delete_channel(channel_id: str) -> None:
             unsub_map = {}
     except Exception:
         unsub_map = {}
-    unsub_map[channel_id] = datetime.now(timezone.utc).isoformat()
+    unsub_map[channel_id] = now_iso
     set_setting("unsubscribed_map_json", json.dumps(unsub_map))
     with get_conn() as conn:
         conn.execute("DELETE FROM videos WHERE channel_id = ?", (channel_id,))
-        conn.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
+        row = conn.execute("SELECT channel_id FROM channels WHERE channel_id = ?", (channel_id,)).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE channels SET status = 'unfollowed', updated_at = ? WHERE channel_id = ?",
+                (now_iso, channel_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO channels(channel_id, title, uploads_playlist_id, source, added_at, status, updated_at)
+                VALUES (?, ?, ?, 'unfollowed', ?, 'unfollowed', ?)
+                """,
+                (channel_id, channel_id, channel_id, now_iso, now_iso),
+            )
+
+
+def subscribe_channel(channel_id: str) -> None:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    raw = get_setting("unsubscribed_map_json", "{}")
+    try:
+        unsub_map = json.loads(raw)
+        if isinstance(unsub_map, dict) and channel_id in unsub_map:
+            del unsub_map[channel_id]
+            set_setting("unsubscribed_map_json", json.dumps(unsub_map))
+    except Exception:
+        pass
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE channels SET status = 'subscribed', updated_at = ? WHERE channel_id = ?",
+            (now_iso, channel_id),
+        )
+
+
+def set_channel_region(channel_id: str, region: str) -> str:
+    reg = "Nasional" if region == "Nasional" else "Internasional"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE channels SET region = ?, updated_at = ? WHERE channel_id = ?",
+            (reg, now_iso, channel_id),
+        )
+        conn.execute(
+            "UPDATE videos SET region = ?, updated_at = ? WHERE channel_id = ?",
+            (reg, now_iso, channel_id),
+        )
+    return reg
 
 
 def clear_demo_data() -> None:
@@ -157,18 +280,40 @@ def clear_demo_data() -> None:
 def upsert_videos(videos: list[dict]) -> int:
     if not videos:
         return 0
-    for v in videos:
-        if "duration_seconds" not in v:
-            v["duration_seconds"] = duration_to_seconds(v.get("duration", ""))
+    now_iso = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
+        ch_rows = conn.execute("SELECT channel_id, region, status FROM channels").fetchall()
+        ch_region_map = {r["channel_id"]: (r["region"] or "Nasional") for r in ch_rows}
+        unfollowed_set = {r["channel_id"] for r in ch_rows if r["status"] == "unfollowed"}
+
+        filtered_videos = []
+        for v in videos:
+            cid = v.get("channel_id", "")
+            # Filter Masuk (Ingress Gate): buang video dari channel yang berstatus unfollowed
+            if cid in unfollowed_set:
+                continue
+            if "duration_seconds" not in v:
+                v["duration_seconds"] = duration_to_seconds(v.get("duration", ""))
+            if not v.get("region"):
+                v["region"] = ch_region_map.get(cid) or classify_region(v.get("channel_title", ""))
+            if not v.get("updated_at"):
+                v["updated_at"] = now_iso
+            filtered_videos.append(v)
+
+        if not filtered_videos:
+            return 0
+
+        # Menjaga Kolom View: views_hp dan views_laptop lokal TIDAK ditimpa saat refresh Google API
         conn.executemany(
             """
             INSERT INTO videos(
                 video_id, channel_id, channel_title, channel_thumbnail,
-                title, thumbnail_url, published_at, view_count, like_count, duration, duration_seconds, is_demo
+                title, thumbnail_url, published_at, view_count, like_count,
+                duration, duration_seconds, is_demo, region, updated_at
             ) VALUES (
                 :video_id, :channel_id, :channel_title, :channel_thumbnail,
-                :title, :thumbnail_url, :published_at, :view_count, :like_count, :duration, :duration_seconds, :is_demo
+                :title, :thumbnail_url, :published_at, :view_count, :like_count,
+                :duration, :duration_seconds, :is_demo, :region, :updated_at
             )
             ON CONFLICT(video_id) DO UPDATE SET
                 title=excluded.title,
@@ -178,39 +323,112 @@ def upsert_videos(videos: list[dict]) -> int:
                 duration=excluded.duration,
                 duration_seconds=excluded.duration_seconds,
                 channel_title=excluded.channel_title,
-                channel_thumbnail=excluded.channel_thumbnail
+                channel_thumbnail=excluded.channel_thumbnail,
+                region=excluded.region
             """,
-            videos,
+            filtered_videos,
         )
-    return len(videos)
+    return len(filtered_videos)
 
 
-def increment_channel_watched(channel_id: str) -> int:
+def record_watch(channel_id: str, video_id: str = "", device: str = "laptop") -> dict:
+    dev = "hp" if str(device).lower() == "hp" else "laptop"
+    col = "views_hp" if dev == "hp" else "views_laptop"
+    now_iso = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE channels SET watched_count = COALESCE(watched_count, 0) + 1 WHERE channel_id = ?",
-            (channel_id,),
-        )
-        row = conn.execute(
-            "SELECT COALESCE(watched_count, 0) AS watched_count FROM channels WHERE channel_id = ?",
-            (channel_id,),
-        ).fetchone()
-        return int(row["watched_count"]) if row else 0
+        if video_id:
+            conn.execute(
+                f"UPDATE videos SET {col} = COALESCE({col}, 0) + 1, updated_at = ? WHERE video_id = ?",
+                (now_iso, video_id),
+            )
+            if not channel_id:
+                v_row = conn.execute("SELECT channel_id FROM videos WHERE video_id = ?", (video_id,)).fetchone()
+                if v_row:
+                    channel_id = v_row["channel_id"]
+
+        if channel_id:
+            conn.execute(
+                f"""
+                UPDATE channels
+                SET {col} = COALESCE({col}, 0) + 1,
+                    watched_count = COALESCE(views_hp, 0) + COALESCE(views_laptop, 0) + 1,
+                    updated_at = ?
+                WHERE channel_id = ?
+                """,
+                (now_iso, channel_id),
+            )
+
+        c_info = {"views_hp": 0, "views_laptop": 0, "views_total": 0, "watched_count": 0}
+        if channel_id:
+            crow = conn.execute(
+                "SELECT COALESCE(views_hp, 0) AS views_hp, COALESCE(views_laptop, 0) AS views_laptop, COALESCE(views_total, 0) AS views_total FROM channels WHERE channel_id = ?",
+                (channel_id,),
+            ).fetchone()
+            if crow:
+                c_info = {
+                    "views_hp": int(crow["views_hp"]),
+                    "views_laptop": int(crow["views_laptop"]),
+                    "views_total": int(crow["views_total"]),
+                    "watched_count": int(crow["views_total"]),
+                }
+
+        v_info = {"views_hp": 0, "views_laptop": 0, "views_total": 0}
+        if video_id:
+            vrow = conn.execute(
+                "SELECT COALESCE(views_hp, 0) AS views_hp, COALESCE(views_laptop, 0) AS views_laptop, COALESCE(views_total, 0) AS views_total FROM videos WHERE video_id = ?",
+                (video_id,),
+            ).fetchone()
+            if vrow:
+                v_info = {
+                    "views_hp": int(vrow["views_hp"]),
+                    "views_laptop": int(vrow["views_laptop"]),
+                    "views_total": int(vrow["views_total"]),
+                }
+
+        return {
+            "channel_id": channel_id,
+            "video_id": video_id,
+            "device": dev,
+            **c_info,
+            "video_views_hp": v_info["views_hp"],
+            "video_views_laptop": v_info["views_laptop"],
+            "video_views_total": v_info["views_total"],
+        }
 
 
-def list_channels() -> list[dict]:
+def increment_channel_watched(channel_id: str, device: str = "laptop", video_id: str = "") -> int:
+    res = record_watch(channel_id=channel_id, video_id=video_id, device=device)
+    return int(res.get("views_total", 0))
+
+
+def list_channels(region: str = "all", include_unfollowed: bool = False) -> list[dict]:
+    clauses = ["1=1"]
+    params: list = []
+    if not include_unfollowed:
+        clauses.append("COALESCE(c.status, 'subscribed') != 'unfollowed'")
+    if region in ("Nasional", "Internasional"):
+        clauses.append("COALESCE(c.region, 'Nasional') = ?")
+        params.append(region)
+    where_sql = " AND ".join(clauses)
     with get_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT c.*,
-                   COALESCE(c.watched_count, 0) AS watched_count,
+                   COALESCE(c.views_hp, 0) AS views_hp,
+                   COALESCE(c.views_laptop, 0) AS views_laptop,
+                   COALESCE(c.views_total, c.watched_count, 0) AS views_total,
+                   COALESCE(c.views_total, c.watched_count, 0) AS watched_count,
+                   COALESCE(c.region, 'Nasional') AS region,
+                   COALESCE(c.status, 'subscribed') AS status,
                    COUNT(v.video_id) AS synced_video_count,
                    CASE WHEN c.yt_video_count > COUNT(v.video_id) THEN c.yt_video_count ELSE COUNT(v.video_id) END AS video_count
             FROM channels c
             LEFT JOIN videos v ON v.channel_id = c.channel_id
+            WHERE {where_sql}
             GROUP BY c.channel_id
-            ORDER BY COALESCE(c.watched_count, 0) DESC, c.title COLLATE NOCASE ASC
-            """
+            ORDER BY COALESCE(c.views_total, c.watched_count, 0) DESC, c.title COLLATE NOCASE ASC
+            """,
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -226,6 +444,7 @@ def list_channels_for_refresh(rotating_offset: int = 0) -> list[dict]:
             FROM channels c
             LEFT JOIN videos v ON v.channel_id = c.channel_id
             WHERE c.channel_id NOT LIKE 'UC_demo_%'
+              AND COALESCE(c.status, 'subscribed') != 'unfollowed'
             GROUP BY c.channel_id
             ORDER BY CASE WHEN COUNT(v.video_id) = 0 THEN 0 ELSE 1 END ASC,
                      MAX(v.published_at) DESC,
@@ -268,6 +487,7 @@ def query_videos(
     period: str = "all",
     channel_id: str = "",
     q: str = "",
+    region: str = "all",
     limit: int = 25,
     page: int = 1,
     min_minutes: int = 0,
@@ -279,33 +499,39 @@ def query_videos(
     offset = (page - 1) * limit
 
     order_map = {
-        "views": "view_count DESC, published_at DESC",
-        "likes": "like_count DESC, view_count DESC",
-        "time": "published_at DESC",
+        "views": "videos.view_count DESC, videos.views_total DESC, videos.published_at DESC",
+        "local_views": "videos.views_total DESC, videos.view_count DESC, videos.published_at DESC",
+        "likes": "videos.like_count DESC, videos.view_count DESC",
+        "time": "videos.published_at DESC",
     }
-    order_sql = order_map.get(sort_by, "published_at DESC")
+    order_sql = order_map.get(sort_by, "videos.published_at DESC")
     start_iso, end_iso = period_bounds(period, now=now)
 
-    clauses = ["1=1"]
+    clauses = [
+        "videos.channel_id NOT IN (SELECT channel_id FROM channels WHERE status = 'unfollowed')"
+    ]
     params: list = []
 
     if start_iso:
-        clauses.append("published_at >= ?")
+        clauses.append("videos.published_at >= ?")
         params.append(start_iso)
     if end_iso:
-        clauses.append("published_at < ?")
+        clauses.append("videos.published_at < ?")
         params.append(end_iso)
     if channel_id:
-        clauses.append("channel_id = ?")
+        clauses.append("videos.channel_id = ?")
         params.append(channel_id)
+    if region in ("Nasional", "Internasional"):
+        clauses.append("COALESCE(videos.region, 'Nasional') = ?")
+        params.append(region)
     if min_minutes > 0:
-        clauses.append("duration_seconds >= ?")
+        clauses.append("videos.duration_seconds >= ?")
         params.append(min_minutes * 60)
     if max_minutes < 120:
-        clauses.append("duration_seconds <= ?")
+        clauses.append("videos.duration_seconds <= ?")
         params.append(max_minutes * 60)
     if q.strip():
-        clauses.append("(title LIKE ? OR channel_title LIKE ?)")
+        clauses.append("(videos.title LIKE ? OR videos.channel_title LIKE ?)")
         like_q = f"%{q.strip()}%"
         params.extend([like_q, like_q])
 
@@ -313,7 +539,20 @@ def query_videos(
     with get_conn() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM videos WHERE {where_sql}", params).fetchone()[0]
         rows = conn.execute(
-            f"SELECT videos.*, COALESCE((SELECT watched_count FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS watched_count FROM videos WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            f"""
+            SELECT videos.*,
+                   COALESCE(videos.views_hp, 0) AS views_hp,
+                   COALESCE(videos.views_laptop, 0) AS views_laptop,
+                   COALESCE(videos.views_total, 0) AS views_total,
+                   COALESCE(videos.region, 'Nasional') AS region,
+                   COALESCE((SELECT c.views_hp FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS channel_views_hp,
+                   COALESCE((SELECT c.views_laptop FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS channel_views_laptop,
+                   COALESCE((SELECT c.views_total FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS watched_count
+            FROM videos
+            WHERE {where_sql}
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+            """,
             [*params, limit, offset],
         ).fetchall()
 
@@ -324,6 +563,172 @@ def query_videos(
         "page": page,
         "limit": limit,
         "total_pages": total_pages,
+    }
+
+
+def sync_device_data(payload: dict) -> dict:
+    """
+    Sinkronisasi 2 arah antara HP dan Laptop (via Kabel USB / JSON Bundle):
+    - HP menulis views_hp, Laptop menulis views_laptop (tanpa double counting).
+    - Rekonsiliasi status unfollowed vs subscribed menggunakan timestamp updated_at terbaru.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    incoming_device = str(payload.get("device", "hp")).lower()
+    incoming_videos = payload.get("videos", []) or []
+    incoming_channels = payload.get("channels", []) or []
+
+    updated_videos_count = 0
+    updated_channels_count = 0
+
+    with get_conn() as conn:
+        # 1. Rekonsiliasi Tabel Videos (views_hp & views_laptop)
+        for v in incoming_videos:
+            vid = str(v.get("video_id", "")).strip()
+            if not vid:
+                continue
+            v_hp = int(v.get("views_hp", 0) or 0)
+            v_laptop = int(v.get("views_laptop", 0) or 0)
+            v_upd = str(v.get("updated_at", "") or now_iso)
+            if incoming_device == "hp":
+                cur = conn.execute(
+                    "UPDATE videos SET views_hp = MAX(COALESCE(views_hp, 0), ?), updated_at = ? WHERE video_id = ?",
+                    (v_hp, v_upd, vid),
+                )
+            elif incoming_device == "laptop":
+                cur = conn.execute(
+                    "UPDATE videos SET views_laptop = MAX(COALESCE(views_laptop, 0), ?), updated_at = ? WHERE video_id = ?",
+                    (v_laptop, v_upd, vid),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    UPDATE videos
+                    SET views_hp = MAX(COALESCE(views_hp, 0), ?),
+                        views_laptop = MAX(COALESCE(views_laptop, 0), ?),
+                        updated_at = ?
+                    WHERE video_id = ?
+                    """,
+                    (v_hp, v_laptop, v_upd, vid),
+                )
+            if cur.rowcount > 0:
+                updated_videos_count += 1
+
+        # 2. Rekonsiliasi Tabel Channels / Creators (views_hp, views_laptop, status unfollowed/subscribed via updated_at)
+        local_ch_rows = conn.execute(
+            "SELECT channel_id, status, region, COALESCE(views_hp, 0) AS views_hp, COALESCE(views_laptop, 0) AS views_laptop, COALESCE(updated_at, '') AS updated_at FROM channels"
+        ).fetchall()
+        local_ch_map = {r["channel_id"]: dict(r) for r in local_ch_rows}
+
+        for c in incoming_channels:
+            cid = str(c.get("channel_id") or c.get("creator_id") or "").strip()
+            if not cid:
+                continue
+            c_title = str(c.get("title") or c.get("channel_name") or cid).strip()
+            c_hp = int(c.get("views_hp", 0) or 0)
+            c_laptop = int(c.get("views_laptop", 0) or 0)
+            c_status = str(c.get("status", "subscribed") or "subscribed")
+            c_region = str(c.get("region", "") or "")
+            c_upd = str(c.get("updated_at", "") or "")
+
+            existing = local_ch_map.get(cid)
+            if existing:
+                new_hp = max(int(existing["views_hp"]), c_hp) if incoming_device in ("hp", "bundle") else int(existing["views_hp"])
+                new_laptop = max(int(existing["views_laptop"]), c_laptop) if incoming_device in ("laptop", "bundle") else int(existing["views_laptop"])
+                new_status = existing["status"] or "subscribed"
+                new_upd = existing["updated_at"] or ""
+                new_region = existing["region"] or "Nasional"
+
+                # Gunakan timestamp updated_at terbaru untuk rekonsiliasi status unfollowed vs subscribed
+                if c_upd and (not new_upd or c_upd >= new_upd):
+                    if c_status in ("subscribed", "unfollowed"):
+                        new_status = c_status
+                    new_upd = c_upd
+                    if c_region in ("Nasional", "Internasional"):
+                        new_region = c_region
+
+                conn.execute(
+                    """
+                    UPDATE channels
+                    SET views_hp = ?,
+                        views_laptop = ?,
+                        watched_count = ? + ?,
+                        status = ?,
+                        region = ?,
+                        updated_at = ?
+                    WHERE channel_id = ?
+                    """,
+                    (new_hp, new_laptop, new_hp, new_laptop, new_status, new_region, new_upd or now_iso, cid),
+                )
+                if new_status == "unfollowed":
+                    conn.execute("DELETE FROM videos WHERE channel_id = ?", (cid,))
+                updated_channels_count += 1
+            else:
+                # Creator baru dari perangkat lain: tambahkan jika tidak unfollowed (atau simpan tombstone jika unfollowed)
+                uploads_pid = "UU" + cid[2:] if cid.startswith("UC") else cid
+                reg = c_region if c_region in ("Nasional", "Internasional") else classify_region(c_title)
+                conn.execute(
+                    """
+                    INSERT INTO channels(
+                        channel_id, title, handle, thumbnail_url, uploads_playlist_id,
+                        source, added_at, region, status, views_hp, views_laptop, watched_count, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'sync', ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        cid,
+                        c_title,
+                        str(c.get("handle", "")),
+                        str(c.get("thumbnail_url", "")),
+                        uploads_pid,
+                        now_iso,
+                        reg,
+                        c_status if c_status in ("subscribed", "unfollowed") else "subscribed",
+                        c_hp,
+                        c_laptop,
+                        c_hp + c_laptop,
+                        c_upd or now_iso,
+                    ),
+                )
+                updated_channels_count += 1
+
+        # 3. Kembalikan paket balasan berisi data terbaru dari Laptop ke HP
+        out_videos = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT video_id, channel_id, region,
+                       COALESCE(views_hp, 0) AS views_hp,
+                       COALESCE(views_laptop, 0) AS views_laptop,
+                       COALESCE(views_total, 0) AS views_total,
+                       COALESCE(updated_at, '') AS updated_at
+                FROM videos
+                WHERE COALESCE(views_hp, 0) > 0 OR COALESCE(views_laptop, 0) > 0
+                """
+            ).fetchall()
+        ]
+        out_channels = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT channel_id, title, handle, thumbnail_url, uploads_playlist_id,
+                       COALESCE(region, 'Nasional') AS region,
+                       COALESCE(status, 'subscribed') AS status,
+                       COALESCE(views_hp, 0) AS views_hp,
+                       COALESCE(views_laptop, 0) AS views_laptop,
+                       COALESCE(views_total, 0) AS views_total,
+                       COALESCE(updated_at, '') AS updated_at
+                FROM channels
+                """
+            ).fetchall()
+        ]
+
+    return {
+        "status": "ok",
+        "device": "laptop",
+        "synced_at": now_iso,
+        "updated_videos_count": updated_videos_count,
+        "updated_channels_count": updated_channels_count,
+        "videos": out_videos,
+        "channels": out_channels,
     }
 
 

@@ -28,6 +28,7 @@ app.add_middleware(
 SESSION_UI_STATE: dict = {
     "sort_by": "time",
     "period": "all",
+    "region": "all",
     "channel_id": "",
     "q": "",
     "page": 1,
@@ -110,6 +111,7 @@ class RefreshYouTubePayload(BaseModel):
 class UiStatePayload(BaseModel):
     sort_by: str | None = None
     period: str | None = None
+    region: str | None = None
     channel_id: str | None = None
     q: str | None = None
     page: int | None = None
@@ -118,6 +120,22 @@ class UiStatePayload(BaseModel):
     limit: int | None = None
     sidebar_mode: str | None = None
     filter_minimized: bool | None = None
+
+
+class WatchPayload(BaseModel):
+    video_id: str = ""
+    channel_id: str = ""
+    device: str = "laptop"
+
+
+class RegionPayload(BaseModel):
+    region: str = "Nasional"
+
+
+class DeviceSyncPayload(BaseModel):
+    device: str = "hp"
+    videos: list[dict] = []
+    channels: list[dict] = []
 
 
 @app.get("/api/state")
@@ -147,6 +165,8 @@ def update_ui_state(payload: UiStatePayload) -> dict:
         SESSION_UI_STATE["sort_by"] = payload.sort_by
     if payload.period is not None:
         SESSION_UI_STATE["period"] = payload.period
+    if payload.region is not None:
+        SESSION_UI_STATE["region"] = payload.region
     if payload.channel_id is not None:
         SESSION_UI_STATE["channel_id"] = payload.channel_id
     if payload.q is not None:
@@ -180,6 +200,7 @@ def update_ui_state(payload: UiStatePayload) -> dict:
 def get_videos(
     sort_by: str = "time",
     period: str = "all",
+    region: str = "all",
     channel_id: str = "",
     q: str = "",
     limit: int = 25,
@@ -190,6 +211,7 @@ def get_videos(
     # Simpan kondisi terakhir ke SESSION_UI_STATE agar saat Refresh halaman (F5) tidak hilang
     SESSION_UI_STATE["sort_by"] = sort_by
     SESSION_UI_STATE["period"] = period
+    SESSION_UI_STATE["region"] = region
     SESSION_UI_STATE["channel_id"] = channel_id
     SESSION_UI_STATE["q"] = q
     SESSION_UI_STATE["page"] = max(1, page)
@@ -201,6 +223,7 @@ def get_videos(
     res = db.query_videos(
         sort_by=sort_by,
         period=period,
+        region=region,
         channel_id=channel_id,
         q=q,
         limit=limit,
@@ -223,6 +246,7 @@ def get_videos(
             res = db.query_videos(
                 sort_by=sort_by,
                 period=period,
+                region=region,
                 channel_id=channel_id,
                 q=q,
                 limit=limit,
@@ -242,6 +266,7 @@ def get_videos(
                 res = db.query_videos(
                     sort_by=sort_by,
                     period=period,
+                    region=region,
                     channel_id="",
                     q=q,
                     limit=limit,
@@ -262,6 +287,7 @@ def get_videos(
                     res = db.query_videos(
                         sort_by=sort_by,
                         period=period,
+                        region=region,
                         channel_id=channel_id,
                         q=q,
                         limit=limit,
@@ -380,6 +406,12 @@ def save_settings(payload: SettingsPayload) -> dict:
     return {"status": "ok", **get_state()}
 
 
+@app.get("/api/channels")
+def get_channels_list(region: str = "all") -> dict:
+    channels = db.list_channels(region=region)
+    return {"status": "ok", "channels": channels, "region": region}
+
+
 @app.post("/api/channels")
 def add_channel(payload: AddChannelPayload) -> dict:
     api_key = db.get_setting("api_key", "")
@@ -392,10 +424,40 @@ def add_channel(payload: AddChannelPayload) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/videos/{video_id}/watch")
+def watch_video(video_id: str, payload: WatchPayload | None = None) -> dict:
+    dev = payload.device if payload and payload.device else "laptop"
+    cid = payload.channel_id if payload else ""
+    res = db.record_watch(channel_id=cid, video_id=video_id, device=dev)
+    return {"status": "ok", **res}
+
+
 @app.post("/api/channels/{channel_id}/watch")
-def watch_channel(channel_id: str) -> dict:
-    watched_count = db.increment_channel_watched(channel_id)
-    return {"status": "ok", "channel_id": channel_id, "watched_count": watched_count}
+def watch_channel(channel_id: str, payload: WatchPayload | None = None) -> dict:
+    dev = payload.device if payload and payload.device else "laptop"
+    vid = payload.video_id if payload else ""
+    res = db.record_watch(channel_id=channel_id, video_id=vid, device=dev)
+    return {"status": "ok", **res}
+
+
+@app.post("/api/channels/{channel_id}/region")
+def update_channel_region(channel_id: str, payload: RegionPayload) -> dict:
+    reg = db.set_channel_region(channel_id, payload.region)
+    return {"status": "ok", "channel_id": channel_id, "region": reg}
+
+
+@app.post("/api/channels/{channel_id}/subscribe")
+def subscribe_channel_endpoint(channel_id: str) -> dict:
+    db.subscribe_channel(channel_id)
+    return {"status": "ok", "channel_id": channel_id, "status": "subscribed"}
+
+
+@app.post("/api/channels/{channel_id}/unfollow")
+def unfollow_channel_endpoint(channel_id: str) -> dict:
+    db.delete_channel(channel_id)
+    if SESSION_UI_STATE.get("channel_id") == channel_id:
+        SESSION_UI_STATE["channel_id"] = ""
+    return {"status": "ok", "channel_id": channel_id, "status": "unfollowed"}
 
 
 @app.delete("/api/channels/{channel_id}")
@@ -404,6 +466,28 @@ def remove_channel(channel_id: str) -> dict:
     if SESSION_UI_STATE.get("channel_id") == channel_id:
         SESSION_UI_STATE["channel_id"] = ""
     return {"status": "ok"}
+
+
+@app.post("/api/sync/exchange")
+def sync_exchange_device(payload: DeviceSyncPayload) -> dict:
+    """Sinkronisasi langsung HP ⇄ Laptop via Kabel USB / Jaringan Lokal."""
+    return db.sync_device_data(payload.dict())
+
+
+@app.get("/api/sync/export-bundle")
+def export_sync_bundle_endpoint() -> Response:
+    bundle = db.sync_device_data({"device": "bundle", "videos": [], "channels": []})
+    bundle_json = json.dumps(bundle, indent=2, ensure_ascii=False)
+    return Response(
+        content=bundle_json,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="youtube_sync_bundle.json"'},
+    )
+
+
+@app.post("/api/sync/import-bundle")
+def import_sync_bundle_endpoint(payload: DeviceSyncPayload) -> dict:
+    return db.sync_device_data(payload.dict())
 
 
 @app.delete("/api/demo")
