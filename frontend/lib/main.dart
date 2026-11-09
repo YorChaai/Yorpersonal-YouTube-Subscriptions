@@ -265,10 +265,26 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   Future<void> _restoreSessionAndFetch() async {
     setState(() => loading = true);
     try {
-      final stateRes = await http
-          .get(Uri.parse('$baseUrl/api/state'))
-          .timeout(const Duration(seconds: 2));
-      if (stateRes.statusCode == 200) {
+      http.Response? stateRes;
+      final candidates = <String>{
+        baseUrl,
+        'http://127.0.0.1:8000',
+        'http://172.18.164.232:8000',
+        'http://192.168.68.54:8000',
+      };
+      for (final candidate in candidates) {
+        try {
+          final r = await http
+              .get(Uri.parse('$candidate/api/state'))
+              .timeout(const Duration(milliseconds: 1200));
+          if (r.statusCode == 200) {
+            baseUrl = candidate;
+            stateRes = r;
+            break;
+          }
+        } catch (_) {}
+      }
+      if (stateRes != null && stateRes.statusCode == 200) {
         final sData = jsonDecode(stateRes.body);
         final sess = (sData['session_state'] as Map?) ?? {};
         final rawTabLimits = (sData['tab_limits'] as Map?) ?? {};
@@ -1559,7 +1575,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (sidebarMode != 'hidden' && !isMobile) _buildSidebar(),
+          if (sidebarMode != 'hidden') _buildSidebar(isNarrow: isMobile),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1568,22 +1584,24 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 Expanded(
                   child: loading
                       ? const Center(child: CircularProgressIndicator())
-                      : _buildVideoGridWithPagination(screenWidth),
+                      : LayoutBuilder(
+                          builder: (ctx, constraints) =>
+                              _buildVideoGridWithPagination(constraints.maxWidth),
+                        ),
                 ),
               ],
             ),
           ),
         ],
       ),
-      drawer: isMobile ? Drawer(backgroundColor: const Color(0xFF0F0F0F), child: _buildSidebar(forceFull: true)) : null,
     );
   }
 
-  Widget _buildSidebar({bool forceFull = false}) {
+  Widget _buildSidebar({bool forceFull = false, bool isNarrow = false}) {
     final isMini = !forceFull && sidebarMode == 'mini';
     if (isMini) {
       return SizedBox(
-        width: 72,
+        width: isNarrow ? 62 : 72,
         child: Material(
           color: const Color(0xFF0F0F0F),
           child: ListView(
@@ -1624,9 +1642,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               ...channels.map((ch) {
                 final cid = (ch['channel_id'] ?? '').toString();
                 final title = (ch['title'] ?? '').toString();
+                final watchedCount = int.tryParse((ch['watched_count'] ?? 0).toString()) ?? 0;
                 final isSelected = selectedChannelId == cid;
                 return Tooltip(
-                  message: '$title (${ch['video_count'] ?? 0} video)',
+                  message: '$title ($watchedCount view)',
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: () => _selectChannelTab(cid),
@@ -1637,19 +1656,45 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Center(
-                        child: CircleAvatar(
-                          radius: 16,
-                          backgroundColor: const Color(0xFF383838),
-                          backgroundImage: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
-                              ? NetworkImage(ch['thumbnail_url'])
-                              : null,
-                          onBackgroundImageError: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
-                              ? (_, _) {}
-                              : null,
-                          child: Text(
-                            title.isNotEmpty ? title[0] : '?',
-                            style: const TextStyle(fontSize: 11, color: Colors.white70),
-                          ),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            CircleAvatar(
+                              radius: 16,
+                              backgroundColor: const Color(0xFF383838),
+                              backgroundImage: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
+                                  ? NetworkImage(ch['thumbnail_url'])
+                                  : null,
+                              onBackgroundImageError: (ch['thumbnail_url'] ?? '').toString().isNotEmpty
+                                  ? (_, _) {}
+                                  : null,
+                              child: Text(
+                                title.isNotEmpty ? title[0] : '?',
+                                style: const TextStyle(fontSize: 11, color: Colors.white70),
+                              ),
+                            ),
+                            if (watchedCount > 0)
+                              Positioned(
+                                right: -4,
+                                bottom: -4,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1E3A2F),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: const Color(0xFF2E7D32), width: 0.8),
+                                  ),
+                                  child: Text(
+                                    '$watchedCount',
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF81C784),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
@@ -1663,7 +1708,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     }
 
     return SizedBox(
-      width: 240,
+      width: isNarrow ? 190 : 240,
       child: Material(
         color: const Color(0xFF0F0F0F),
         child: ListView(
@@ -2052,8 +2097,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 const Icon(Icons.timer_outlined, size: 18, color: Color(0xFFFF0033)),
                 const SizedBox(width: 8),
                 Text(
-                  'Durasi: Minimal ${_formatMinutesLabel(durationRange.start.round())}',
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white),
+                  isMobile
+                      ? _formatMinutesLabel(durationRange.start.round())
+                      : 'Durasi: Minimal ${_formatMinutesLabel(durationRange.start.round())}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
                 ),
                 Expanded(
                   child: SliderTheme(
@@ -2088,8 +2135,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   ),
                 ),
                 Text(
-                  'Maksimal ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}',
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white),
+                  isMobile
+                      ? (durationRange.end.round() >= 120
+                          ? '2 Jam+'
+                          : _formatMinutesLabel(durationRange.end.round()))
+                      : 'Maksimal ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
                 ),
                 if (durationRange.start.round() > 0 || durationRange.end.round() < 120) ...[
                   const SizedBox(width: 8),
