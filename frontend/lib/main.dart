@@ -1619,6 +1619,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (isMobile) _buildMobileQuickControlBar(),
                     _buildFilterAndSortHeader(isMobile),
                     Expanded(
                       child: loading
@@ -1917,6 +1918,135 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     );
   }
 
+  Widget _buildMobileQuickControlBar() {
+    String activeChannelName = 'Pilih Channel (${channels.length})';
+    if (selectedChannelId.isNotEmpty) {
+      for (final ch in channels) {
+        if ((ch['channel_id'] ?? '').toString() == selectedChannelId) {
+          activeChannelName = (ch['title'] ?? selectedChannelId).toString();
+          break;
+        }
+      }
+    }
+    final isSidebarOpen = sidebarMode == 'full';
+
+    return Container(
+      color: const Color(0xFF0F0F0F),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
+      child: Row(
+        children: [
+          // Tombol Besar Kiri: Buka / Tutup Daftar Channel (Subscriptions)
+          Expanded(
+            child: SizedBox(
+              height: 42,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isSidebarOpen
+                      ? const Color(0xFFFF0033)
+                      : selectedChannelId.isNotEmpty
+                          ? const Color(0xFF1E3A2F)
+                          : const Color(0xFF222222),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: BorderSide(
+                      color: isSidebarOpen
+                          ? const Color(0xFFFF4E4E)
+                          : selectedChannelId.isNotEmpty
+                              ? const Color(0xFF2E7D32)
+                              : const Color(0xFF3A3A3A),
+                    ),
+                  ),
+                ),
+                icon: Icon(
+                  isSidebarOpen ? Icons.close : Icons.subscriptions_outlined,
+                  size: 18,
+                  color: isSidebarOpen ? Colors.white : Colors.redAccent,
+                ),
+                label: Text(
+                  isSidebarOpen ? 'Tutup Channel' : activeChannelName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                onPressed: () {
+                  final next = sidebarMode == 'full' ? 'hidden' : 'full';
+                  setState(() => sidebarMode = next);
+                  _saveUiPreferences(newSidebarMode: next);
+                },
+              ),
+            ),
+          ),
+          // Tombol cepat kembali ke Semua Follower jika sedang memilih 1 channel atau mencari teks
+          if (selectedChannelId.isNotEmpty || searchQuery.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            SizedBox(
+              height: 42,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: const Color(0xFF222222),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  side: const BorderSide(color: Color(0xFF3A3A3A)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () => _selectChannelTab(''),
+                child: const Icon(Icons.home_filled, size: 19, color: Colors.white),
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
+          // Tombol Besar Kanan: Buka Filter / Tutup Filter (Selalu diam di tempat, mudah ditekan jempol)
+          Expanded(
+            child: SizedBox(
+              height: 42,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: filterMinimized
+                      ? const Color(0xFF222222)
+                      : const Color(0xFF332610),
+                  foregroundColor: Colors.amberAccent,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: BorderSide(
+                      color: filterMinimized
+                          ? const Color(0xFF3A3A3A)
+                          : Colors.amberAccent,
+                    ),
+                  ),
+                ),
+                icon: Icon(
+                  filterMinimized ? Icons.tune : Icons.keyboard_arrow_up_rounded,
+                  size: 19,
+                  color: Colors.amberAccent,
+                ),
+                label: Text(
+                  filterMinimized ? 'Buka Filter' : 'Tutup Filter',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amberAccent,
+                  ),
+                ),
+                onPressed: () {
+                  final next = !filterMinimized;
+                  setState(() => filterMinimized = next);
+                  _saveUiPreferences(newFilterMinimized: next);
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFilterAndSortHeader(bool isMobile) {
     final periods = [
       ('all', 'Semua Waktu'),
@@ -1939,7 +2069,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           : periods.firstWhere((p) => p.$1 == period, orElse: () => periods.first).$2;
       return Container(
         color: const Color(0xFF0F0F0F),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16, vertical: isMobile ? 2 : 4),
         child: Row(
           children: [
             Expanded(
@@ -1947,17 +2077,18 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 '$sortLabel  •  $periodLabel  •  Durasi: ${_formatMinutesLabel(durationRange.start.round())} – ${_formatMinutesLabel(durationRange.end.round(), isMax: true)}  •  $limit Video/Tab  •  Total: $totalVideos video',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12.5, color: Colors.white70),
+                style: const TextStyle(fontSize: 12, color: Colors.white60),
               ),
             ),
-            TextButton.icon(
-              icon: const Icon(Icons.expand_more, size: 18, color: Colors.amberAccent),
-              label: const Text('Buka Filter', style: TextStyle(fontSize: 12.5, color: Colors.amberAccent)),
-              onPressed: () {
-                setState(() => filterMinimized = false);
-                _saveUiPreferences(newFilterMinimized: false);
-              },
-            ),
+            if (!isMobile)
+              TextButton.icon(
+                icon: const Icon(Icons.expand_more, size: 18, color: Colors.amberAccent),
+                label: const Text('Buka Filter', style: TextStyle(fontSize: 12.5, color: Colors.amberAccent)),
+                onPressed: () {
+                  setState(() => filterMinimized = false);
+                  _saveUiPreferences(newFilterMinimized: false);
+                },
+              ),
           ],
         ),
       );
@@ -2023,18 +2154,19 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           style: const TextStyle(fontSize: 12.5, color: Colors.white54),
         ),
       ),
-      OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          side: const BorderSide(color: Color(0xFF383838)),
+      if (!isMobile)
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            side: const BorderSide(color: Color(0xFF383838)),
+          ),
+          icon: const Icon(Icons.expand_less, size: 16, color: Colors.amberAccent),
+          label: const Text('Minimal', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
+          onPressed: () {
+            setState(() => filterMinimized = true);
+            _saveUiPreferences(newFilterMinimized: true);
+          },
         ),
-        icon: const Icon(Icons.expand_less, size: 16, color: Colors.amberAccent),
-        label: const Text('Minimal', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
-        onPressed: () {
-          setState(() => filterMinimized = true);
-          _saveUiPreferences(newFilterMinimized: true);
-        },
-      ),
     ];
 
     final row2Children = <Widget>[
