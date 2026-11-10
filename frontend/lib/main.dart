@@ -2217,10 +2217,6 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         final remoteVidMap = {
           for (final v in remoteVids) (v['video_id'] ?? '').toString(): v,
         };
-        final remoteChMap = {
-          for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c,
-        };
-
         for (final v in _localVideos) {
           final vid = (v['video_id'] ?? '').toString();
           if (remoteVidMap.containsKey(vid)) {
@@ -2242,24 +2238,44 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           }
         }
 
-        for (final c in _localChannels) {
-          final cid = (c['channel_id'] ?? '').toString();
-          if (remoteChMap.containsKey(cid)) {
-            final rc = remoteChMap[cid];
-            final rHp = int.tryParse((rc['views_hp'] ?? 0).toString()) ?? 0;
-            final rLap =
-                int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
-            final curHp = int.tryParse((c['views_hp'] ?? 0).toString()) ?? 0;
-            final curLap =
-                int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
-            final nextHp = curHp > rHp ? curHp : rHp;
-            final nextLap = curLap > rLap ? curLap : rLap;
-            c['views_hp'] = nextHp;
-            c['views_laptop'] = nextLap;
-            c['views_total'] = nextHp + nextLap;
-            c['watched_count'] = nextHp + nextLap;
-            if (rc['status'] != null) c['status'] = rc['status'];
-            if (rc['region'] != null) c['region'] = rc['region'];
+        for (final rc in remoteChs) {
+          final cid = (rc['channel_id'] ?? '').toString();
+          if (cid.isEmpty) continue;
+          Map<String, dynamic>? cached;
+          for (final c in _localChannels) {
+            if ((c['channel_id'] ?? '').toString() == cid) {
+              cached = c;
+              break;
+            }
+          }
+          final rcHp = int.tryParse((rc['views_hp'] ?? 0).toString()) ?? 0;
+          final rcLap = int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
+          if (cached == null) {
+            // Keep the laptop's creator list available on the phone after
+            // disconnecting, instead of losing creators absent from the seed.
+            if ((rc['status'] ?? 'subscribed') != 'unfollowed') {
+              final added = Map<String, dynamic>.from(rc);
+              added['views_total'] = rcHp + rcLap;
+              added['watched_count'] = rcHp + rcLap;
+              _localChannels.add(added);
+            }
+            continue;
+          }
+          final curHp = int.tryParse((cached['views_hp'] ?? 0).toString()) ?? 0;
+          final curLap =
+              int.tryParse((cached['views_laptop'] ?? 0).toString()) ?? 0;
+          final nextHp = curHp > rcHp ? curHp : rcHp;
+          final nextLap = curLap > rcLap ? curLap : rcLap;
+          cached['views_hp'] = nextHp;
+          cached['views_laptop'] = nextLap;
+          cached['views_total'] = nextHp + nextLap;
+          cached['watched_count'] = nextHp + nextLap;
+          if (rc['status'] != null) cached['status'] = rc['status'];
+          if (rc['region'] != null) cached['region'] = rc['region'];
+          if (rc['updated_at'] != null) cached['updated_at'] = rc['updated_at'];
+          if (rc['title'] != null) cached['title'] = rc['title'];
+          if (rc['thumbnail_url'] != null) {
+            cached['thumbnail_url'] = rc['thumbnail_url'];
           }
         }
 
@@ -2270,6 +2286,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         setState(() => usbSyncProgress = 90);
 
         await _fetchVideos(silent: true);
+        // USB sync updates the in-memory cache. Persist it before reporting
+        // success, otherwise the next cold start restores stale creator counts.
+        await _saveStandaloneData();
 
         if (!mounted) return;
         setState(() {
