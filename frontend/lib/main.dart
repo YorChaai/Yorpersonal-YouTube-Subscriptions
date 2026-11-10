@@ -1533,6 +1533,33 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     return '$mins menit';
   }
 
+  Thumb? _durationThumbSelector(
+    TextDirection textDirection,
+    RangeValues values,
+    double tapValue,
+    Size thumbSize,
+    Size trackSize,
+    double dx,
+  ) {
+    final hitRadius = (thumbSize.width > 48 ? thumbSize.width : 48) / 2;
+    final nearStart =
+        (tapValue - values.start).abs() * trackSize.width <= hitRadius;
+    final nearEnd =
+        (tapValue - values.end).abs() * trackSize.width <= hitRadius;
+
+    if (nearStart && nearEnd) {
+      if (dx == 0) return null;
+      final towardStart = textDirection == TextDirection.ltr ? dx < 0 : dx > 0;
+      return towardStart ? Thumb.start : Thumb.end;
+    }
+    if (nearStart) return Thumb.start;
+    if (nearEnd) return Thumb.end;
+
+    // Track taps between the thumbs select the upper bound. Taps before the
+    // lower bound can still adjust the lower thumb.
+    return tapValue < values.start ? Thumb.start : Thumb.end;
+  }
+
   String _formatCompactNumber(int num) {
     if (num >= 1000000) {
       return '${(num / 1000000).toStringAsFixed(1).replaceAll('.0', '')}M';
@@ -3913,46 +3940,51 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children:
-                          [
-                            ('all', '🌐 Semua'),
-                            ('Nasional', '🇮🇩 Nasional'),
-                            ('Internasional', '🌍 Internasional'),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final reg in [
+                            ('all', '?? Semua'),
+                            ('Nasional', '???? Nasional'),
+                            ('Internasional', '?? Internasional'),
                             ('Belum diketahui', 'Belum diketahui'),
-                          ].map((reg) {
-                            final active = selectedRegion == reg.$1;
-                            return ChoiceChip(
-                              label: Text(reg.$2),
-                              selected: active,
-                              selectedColor: reg.$1 == 'Nasional'
-                                  ? const Color(0xFFD32F2F)
-                                  : (reg.$1 == 'Internasional'
-                                        ? const Color(0xFF1976D2)
-                                        : Colors.white),
-                              backgroundColor: const Color(0xFF2C2C2C),
-                              labelStyle: TextStyle(
-                                color: active
-                                    ? (reg.$1 == 'all'
-                                          ? Colors.black
-                                          : Colors.white)
-                                    : Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12.5,
+                          ])
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(reg.$2),
+                                selected: selectedRegion == reg.$1,
+                                selectedColor: reg.$1 == 'Nasional'
+                                    ? const Color(0xFFD32F2F)
+                                    : (reg.$1 == 'Internasional'
+                                          ? const Color(0xFF1976D2)
+                                          : (reg.$1 == 'Belum diketahui'
+                                                ? const Color(0xFF616161)
+                                                : Colors.white)),
+                                backgroundColor: const Color(0xFF2C2C2C),
+                                labelStyle: TextStyle(
+                                  color:
+                                      selectedRegion == reg.$1 &&
+                                          reg.$1 == 'all'
+                                      ? Colors.black
+                                      : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12.5,
+                                ),
+                                onSelected: (_) {
+                                  setState(() {
+                                    selectedRegion = reg.$1;
+                                    currentPage = 1;
+                                  });
+                                  setModalState(() {});
+                                  _saveUiPreferences();
+                                  _fetchVideos();
+                                },
                               ),
-                              onSelected: (_) {
-                                setState(() {
-                                  selectedRegion = reg.$1;
-                                  currentPage = 1;
-                                });
-                                setModalState(() {});
-                                _saveUiPreferences();
-                                _fetchVideos();
-                              },
-                            );
-                          }).toList(),
+                            ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 14),
                     const Text(
@@ -4053,25 +4085,29 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         ),
                       ],
                     ),
-                    RangeSlider(
-                      values: durationRange,
-                      min: 0,
-                      max: 120,
-                      divisions: 120,
-                      activeColor: const Color(0xFFFF0033),
-                      inactiveColor: const Color(0xFF444444),
-                      onChanged: (vals) {
-                        setState(() => durationRange = vals);
-                        setModalState(() {});
-                      },
-                      onChangeEnd: (vals) {
-                        setState(() {
-                          durationRange = vals;
-                          currentPage = 1;
-                        });
-                        _saveUiPreferences();
-                        _fetchVideos();
-                      },
+                    SliderTheme(
+                      data: SliderTheme.of(
+                        ctx,
+                      ).copyWith(thumbSelector: _durationThumbSelector),
+                      child: RangeSlider(
+                        values: durationRange,
+                        min: 0,
+                        max: 120,
+                        divisions: 120,
+                        activeColor: const Color(0xFFFF0033),
+                        inactiveColor: const Color(0xFF444444),
+                        onChanged: (vals) {
+                          setModalState(() => durationRange = vals);
+                        },
+                        onChangeEnd: (vals) {
+                          setState(() {
+                            durationRange = vals;
+                            currentPage = 1;
+                          });
+                          _saveUiPreferences();
+                          _fetchVideos();
+                        },
+                      ),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -4172,7 +4208,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       ? const Color(0xFFD32F2F)
                       : (reg.$1 == 'Internasional'
                             ? const Color(0xFF1976D2)
-                            : Colors.white),
+                            : (reg.$1 == 'Belum diketahui'
+                                  ? const Color(0xFF616161)
+                                  : Colors.white)),
                   backgroundColor: const Color(0xFF222222),
                   labelStyle: TextStyle(
                     color: active
@@ -4352,7 +4390,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               ? const Color(0xFFD32F2F)
               : (reg.$1 == 'Internasional'
                     ? const Color(0xFF1976D2)
-                    : Colors.white),
+                    : (reg.$1 == 'Belum diketahui'
+                          ? const Color(0xFF616161)
+                          : Colors.white)),
           backgroundColor: const Color(0xFF272727),
           labelStyle: TextStyle(
             color: active
@@ -4609,6 +4649,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       inactiveTrackColor: const Color(0xFF383838),
                       thumbColor: Colors.white,
                       overlayColor: const Color(0x33FF0033),
+                      thumbSelector: _durationThumbSelector,
                       rangeThumbShape: const RoundRangeSliderThumbShape(
                         enabledThumbRadius: 9,
                       ),
