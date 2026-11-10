@@ -83,6 +83,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     0,
     120,
   ); // 0 menit s/d 120 menit (2 jam)
+  Thumb? _activeDurationThumb;
   DateTime?
   skipUnsubscribeConfirmUntil; // Mode 10 menit langsung Unsubscribe tanpa konfirmasi
 
@@ -4103,29 +4104,94 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         ),
                       ],
                     ),
-                    SliderTheme(
-                      data: SliderTheme.of(
-                        ctx,
-                      ).copyWith(thumbSelector: _durationThumbSelector),
-                      child: RangeSlider(
-                        values: durationRange,
-                        min: 0,
-                        max: 120,
-                        divisions: 120,
-                        activeColor: const Color(0xFFFF0033),
-                        inactiveColor: const Color(0xFF444444),
-                        onChanged: (vals) {
-                          setModalState(() => durationRange = vals);
-                        },
-                        onChangeEnd: (vals) {
-                          setState(() {
-                            durationRange = vals;
-                            currentPage = 1;
-                          });
+                    LayoutBuilder(
+                      builder: (sliderContext, constraints) {
+                        const trackInset = 16.0;
+                        final trackWidth =
+                            (constraints.maxWidth - trackInset * 2)
+                                .clamp(1.0, double.infinity)
+                                .toDouble();
+
+                        void finishDurationDrag() {
+                          if (_activeDurationThumb == null) return;
+                          _activeDurationThumb = null;
+                          setState(() => currentPage = 1);
                           _saveUiPreferences();
                           _fetchVideos();
-                        },
-                      ),
+                        }
+
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragStart: (details) {
+                            final x = details.localPosition.dx;
+                            final startX =
+                                trackInset +
+                                durationRange.start / 120 * trackWidth;
+                            final endX =
+                                trackInset +
+                                durationRange.end / 120 * trackWidth;
+                            final startDistance = (x - startX).abs();
+                            final endDistance = (x - endX).abs();
+                            const thumbHitRadius = 24.0;
+
+                            if (startDistance <= thumbHitRadius ||
+                                endDistance <= thumbHitRadius) {
+                              _activeDurationThumb =
+                                  startDistance <= endDistance
+                                  ? Thumb.start
+                                  : Thumb.end;
+                            } else {
+                              final trackFraction =
+                                  ((x - trackInset) / trackWidth).clamp(
+                                    0.0,
+                                    1.0,
+                                  );
+                              _activeDurationThumb = trackFraction < 0.5
+                                  ? Thumb.start
+                                  : Thumb.end;
+                            }
+                          },
+                          onHorizontalDragUpdate: (details) {
+                            final deltaMinutes =
+                                (details.primaryDelta ?? 0) / trackWidth * 120;
+                            final thumb = _activeDurationThumb;
+                            if (thumb == Thumb.start) {
+                              final start = (durationRange.start + deltaMinutes)
+                                  .clamp(0.0, durationRange.end)
+                                  .toDouble();
+                              setModalState(() {
+                                durationRange = RangeValues(
+                                  start,
+                                  durationRange.end,
+                                );
+                              });
+                            } else if (thumb == Thumb.end) {
+                              final end = (durationRange.end + deltaMinutes)
+                                  .clamp(durationRange.start, 120.0)
+                                  .toDouble();
+                              setModalState(() {
+                                durationRange = RangeValues(
+                                  durationRange.start,
+                                  end,
+                                );
+                              });
+                            }
+                          },
+                          onHorizontalDragEnd: (_) => finishDurationDrag(),
+                          onHorizontalDragCancel: finishDurationDrag,
+                          child: IgnorePointer(
+                            child: RangeSlider(
+                              values: durationRange,
+                              min: 0,
+                              max: 120,
+                              divisions: 120,
+                              activeColor: const Color(0xFFFF0033),
+                              inactiveColor: const Color(0xFF444444),
+                              onChanged: (_) {},
+                            ),
+                          ),
+                        );
+                      },
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
