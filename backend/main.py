@@ -317,6 +317,14 @@ def _run_background_refresh(channel_id: str, api_key: str, oauth_token: str) -> 
                 pass
         all_chs = [c for c in db.list_channels() if not c["channel_id"].startswith("UC_demo_")]
 
+        # Recheck channel country/language so old videos inherit the latest
+        # classification too. Missing metadata remains explicitly unknown.
+        if not channel_id:
+            try:
+                youtube_sync.refresh_all_channel_statistics(api_key=api_key, oauth_token=oauth_token)
+            except Exception:
+                pass
+
         if channel_id:
             target_chs = [c for c in all_chs if c["channel_id"] == channel_id]
             REFRESH_STATE["total_channels"] = len(target_chs)

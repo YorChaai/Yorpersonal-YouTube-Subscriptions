@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:sqflite/sqflite.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 void main() {
@@ -576,7 +577,73 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           localMyChannelId = bundledCid;
         }
       }
+      // The bundled file is only a seed. A standalone phone must restore its
+      // own database after the seed has been loaded, otherwise every launch
+      // discards videos fetched by Refresh.
+      if (_isHpDevice) {
+        final db = await _openStandaloneDatabase();
+        final savedChannels = await db.query('channels', orderBy: 'rowid');
+        final savedVideos = await db.query('videos', orderBy: 'rowid');
+        if (savedChannels.isNotEmpty || savedVideos.isNotEmpty) {
+          _localChannels
+            ..clear()
+            ..addAll(
+              savedChannels.map(
+                (e) => jsonDecode(e['data']! as String) as Map<String, dynamic>,
+              ),
+            );
+          _localVideos
+            ..clear()
+            ..addAll(
+              savedVideos.map(
+                (e) => jsonDecode(e['data']! as String) as Map<String, dynamic>,
+              ),
+            );
+        }
+      }
     } catch (_) {}
+  }
+
+  Future<Database> _openStandaloneDatabase() => openDatabase(
+    'standalone_cache.db',
+    version: 1,
+    onCreate: (db, version) async {
+      await db.execute(
+        'CREATE TABLE channels (id TEXT PRIMARY KEY, data TEXT NOT NULL)',
+      );
+      await db.execute(
+        'CREATE TABLE videos (id TEXT PRIMARY KEY, data TEXT NOT NULL)',
+      );
+    },
+  );
+
+  Future<void> _saveStandaloneData() async {
+    if (!_isHpDevice) return;
+    try {
+      final db = await _openStandaloneDatabase();
+      await db.transaction((txn) async {
+        await txn.delete('channels');
+        await txn.delete('videos');
+        final channelBatch = txn.batch();
+        for (final channel in _localChannels) {
+          channelBatch.insert('channels', {
+            'id': (channel['channel_id'] ?? '').toString(),
+            'data': jsonEncode(channel),
+          });
+        }
+        await channelBatch.commit(noResult: true);
+        final videoBatch = txn.batch();
+        for (final video in _localVideos) {
+          videoBatch.insert('videos', {
+            'id': (video['video_id'] ?? '').toString(),
+            'data': jsonEncode(video),
+          });
+        }
+        await videoBatch.commit(noResult: true);
+      });
+    } catch (_) {
+      // Keep the current session usable if device storage is temporarily unavailable.
+    }
   }
 
   void _applyLocalFilterAndPagination() {
@@ -611,7 +678,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         return false;
       }
       if (selectedRegion != 'all') {
-        final reg = (v['region'] ?? 'Nasional').toString();
+        final reg = (v['region'] ?? 'Belum diketahui').toString();
         if (reg != selectedRegion) return false;
       }
       if (minSec > 0 || durationRange.end.round() < 120) {
@@ -637,8 +704,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
 
     filtered.sort((a, b) {
       if (sortBy == 'views') {
-        final va = ((a['view_count'] ?? 0) as int) + ((a['views_total'] ?? 0) as int);
-        final vb = ((b['view_count'] ?? 0) as int) + ((b['views_total'] ?? 0) as int);
+        final va =
+            ((a['view_count'] ?? 0) as int) + ((a['views_total'] ?? 0) as int);
+        final vb =
+            ((b['view_count'] ?? 0) as int) + ((b['views_total'] ?? 0) as int);
         return vb.compareTo(va);
       } else if (sortBy == 'likes') {
         return ((b['like_count'] ?? 0) as int).compareTo(
@@ -892,6 +961,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       return;
     }
 
+    // Jika backend laptop tidak terjangkau (mis. HP tanpa USB/backend mati), otomatis pakai Mode Mandiri
+    if (!isStandaloneMode) {
+      try {
+        await http
+            .get(Uri.parse('$baseUrl/api/state'))
+            .timeout(const Duration(milliseconds: 1500));
+      } catch (_) {
+        isStandaloneMode = true;
+      }
+    }
+
     // 3. Tombol MERAH ditekan -> Mulai sinkronisasi di latar belakang (0% -> 100%) tanpa harus ditunggu
     setState(() {
       refreshingYouTube = true;
@@ -917,7 +997,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       ch['channel_id'] == selectedChannelId),
             )
             .toList();
+        await _standaloneRefreshChannelRegions(targetChs);
         await _standaloneFastRefreshChannels(targetChs);
+        await _saveStandaloneData();
         if (!mounted) return;
         setState(() {
           refreshingYouTube = false;
@@ -987,13 +1069,37 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         final sData = jsonDecode(stateRes.body);
         final vData = jsonDecode(vidRes.body);
         if (!mounted) return;
+        final fetchedChannels = List<Map<String, dynamic>>.from(
+          sData['channels'] ?? [],
+        );
+        final fetchedVideos = List<Map<String, dynamic>>.from(
+          vData['items'] ?? [],
+        );
+        for (final fetched in fetchedChannels) {
+          for (final saved in _localChannels) {
+            if ((saved['channel_id'] ?? '').toString() ==
+                (fetched['channel_id'] ?? '').toString()) {
+              _mergeUsageCounts(fetched, saved, isChannel: true);
+              break;
+            }
+          }
+        }
+        for (final fetched in fetchedVideos) {
+          for (final saved in _localVideos) {
+            if ((saved['video_id'] ?? '').toString() ==
+                (fetched['video_id'] ?? '').toString()) {
+              _mergeUsageCounts(fetched, saved);
+              break;
+            }
+          }
+        }
         setState(() {
           isStandaloneMode = false;
-          channels = List<Map<String, dynamic>>.from(sData['channels'] ?? []);
+          channels = fetchedChannels;
           _sortChannelsByWatchedDesc(channels);
           hasApiKey = sData['has_api_key'] ?? false;
           apiKeyPreview = sData['api_key_preview'] ?? '';
-          videos = List<Map<String, dynamic>>.from(vData['items'] ?? []);
+          videos = fetchedVideos;
           totalVideos = vData['total'] ?? 0;
           totalPages = vData['total_pages'] ?? 1;
           loading = false;
@@ -1102,6 +1208,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     'channel_id': cid,
                     'channel_title': (ch['title'] ?? '').toString(),
                     'channel_thumbnail': (ch['thumbnail_url'] ?? '').toString(),
+                    'region': (ch['region'] ?? 'Belum diketahui').toString(),
                   };
                 }
               }
@@ -1168,8 +1275,94 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               'duration': durStr,
               'duration_seconds': _durationToSeconds(durStr),
               'watched_count': _getCreatorWatchedCount(cid),
+              'region': (meta['region'] ?? 'Belum diketahui').toString(),
               'is_demo': 0,
             });
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  String _classifyLocalRegion(
+    String title,
+    String handle,
+    String country,
+    String language,
+  ) {
+    final countryCode = country.trim().toUpperCase();
+    final lang = language.trim().toLowerCase();
+    if (countryCode == 'ID') return 'Nasional';
+    if (countryCode.isNotEmpty) return 'Internasional';
+    if (lang == 'id' || lang.startsWith('id-')) return 'Nasional';
+    final text = '$title $handle'.toLowerCase();
+    const indonesiaSignals = [
+      'indonesia',
+      'indonesian',
+      'nusantara',
+      'jakarta',
+      'bandung',
+      'surabaya',
+      'jogja',
+      'yogyakarta',
+      'bahasa indonesia',
+      'wib',
+      'kompas',
+      'detik',
+      'tribun',
+      'liputan',
+      'tempo',
+      'kumparan',
+      'tvone',
+      'trans7',
+      'mnc',
+      'jawa',
+      'sunda',
+      'fajrul',
+      'ferry irwandi',
+      'raditya dika',
+      'malaka',
+      'gadgetin',
+    ];
+    if (indonesiaSignals.any(text.contains)) return 'Nasional';
+    return 'Belum diketahui';
+  }
+
+  Future<void> _standaloneRefreshChannelRegions(
+    List<Map<String, dynamic>> targetChannels,
+  ) async {
+    for (var start = 0; start < targetChannels.length; start += 50) {
+      final batch = targetChannels.skip(start).take(50).toList();
+      final ids = batch
+          .map((c) => (c['channel_id'] ?? '').toString())
+          .where((id) => id.isNotEmpty)
+          .toList();
+      if (ids.isEmpty) continue;
+      try {
+        final uri = Uri.https('www.googleapis.com', '/youtube/v3/channels', {
+          'part': 'snippet',
+          'id': ids.join(','),
+          'key': localApiKey,
+        });
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode != 200) continue;
+        final items = (jsonDecode(response.body)['items'] as List?) ?? [];
+        for (final item in items) {
+          final snippet = item['snippet'] ?? {};
+          final channelId = (item['id'] ?? '').toString();
+          final region = _classifyLocalRegion(
+            (snippet['title'] ?? '').toString(),
+            (snippet['customUrl'] ?? '').toString(),
+            (snippet['country'] ?? '').toString(),
+            (snippet['defaultLanguage'] ?? '').toString(),
+          );
+          for (final channel in _localChannels) {
+            if (channel['channel_id'] == channelId) channel['region'] = region;
+          }
+          for (final video in _localVideos) {
+            if (video['channel_id'] == channelId) video['region'] = region;
           }
         }
       } catch (_) {}
@@ -1224,6 +1417,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final snip = ch['snippet'] ?? {};
     final title = (snip['title'] ?? raw).toString();
     final handle = (snip['customUrl'] ?? raw).toString();
+    final region = _classifyLocalRegion(
+      title,
+      handle,
+      (snip['country'] ?? '').toString(),
+      (snip['defaultLanguage'] ?? '').toString(),
+    );
     final thumbUrl =
         ((snip['thumbnails']?['medium'] ??
                     snip['thumbnails']?['default'])?['url'] ??
@@ -1243,6 +1442,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       'uploads_playlist_id': uploadsPid,
       'source': 'manual',
       'video_count': 0,
+      'region': region,
     });
 
     // Ambil 50 video terbaru dari playlist uploads (hemat kuota: 1 poin)
@@ -1293,10 +1493,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           'duration': _parseIsoDuration(
             (v['contentDetails']?['duration'] ?? '').toString(),
           ),
+          'region': region,
           'is_demo': 0,
         });
       }
     }
+    await _saveStandaloneData();
   }
 
   String _parseIsoDuration(String iso) {
@@ -1391,6 +1593,91 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     return 0;
   }
 
+  void _mergeUsageCounts(
+    Map<String, dynamic> current,
+    Map<String, dynamic> saved, {
+    bool isChannel = false,
+  }) {
+    final currentHp = int.tryParse((current['views_hp'] ?? 0).toString()) ?? 0;
+    final savedHp = int.tryParse((saved['views_hp'] ?? 0).toString()) ?? 0;
+    final currentLaptop =
+        int.tryParse((current['views_laptop'] ?? 0).toString()) ?? 0;
+    final savedLaptop =
+        int.tryParse((saved['views_laptop'] ?? 0).toString()) ?? 0;
+    final hp = currentHp > savedHp ? currentHp : savedHp;
+    final laptop = currentLaptop > savedLaptop ? currentLaptop : savedLaptop;
+    current['views_hp'] = hp;
+    current['views_laptop'] = laptop;
+    current['views_total'] = hp + laptop;
+    if (isChannel) current['watched_count'] = hp + laptop;
+    saved['views_hp'] = hp;
+    saved['views_laptop'] = laptop;
+    saved['views_total'] = hp + laptop;
+    if (isChannel) saved['watched_count'] = hp + laptop;
+    if (!isChannel) {
+      final currentWatched =
+          int.tryParse((current['watched_count'] ?? 0).toString()) ?? 0;
+      final savedWatched =
+          int.tryParse((saved['watched_count'] ?? 0).toString()) ?? 0;
+      final watched = currentWatched > savedWatched
+          ? currentWatched
+          : savedWatched;
+      current['watched_count'] = watched;
+      saved['watched_count'] = watched;
+    }
+  }
+
+  Future<void> _saveWatchCountsLocally(String channelId, String videoId) async {
+    if (!_isHpDevice) return;
+    try {
+      final db = await _openStandaloneDatabase();
+      Map<String, dynamic>? channel;
+      for (final item in _localChannels) {
+        if ((item['channel_id'] ?? '').toString() == channelId) {
+          channel = item;
+          break;
+        }
+      }
+      if (channel == null) {
+        for (final item in channels) {
+          if ((item['channel_id'] ?? '').toString() == channelId) {
+            channel = Map<String, dynamic>.from(item);
+            _localChannels.add(channel);
+            break;
+          }
+        }
+      }
+      if (channel != null) {
+        await db.insert('channels', {
+          'id': channelId,
+          'data': jsonEncode(channel),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      Map<String, dynamic>? video;
+      for (final item in _localVideos) {
+        if ((item['video_id'] ?? '').toString() == videoId) {
+          video = item;
+          break;
+        }
+      }
+      if (video == null) {
+        for (final item in videos) {
+          if ((item['video_id'] ?? '').toString() == videoId) {
+            video = Map<String, dynamic>.from(item);
+            _localVideos.add(video);
+            break;
+          }
+        }
+      }
+      if (video != null) {
+        await db.insert('videos', {
+          'id': videoId,
+          'data': jsonEncode(video),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _openYouTubeVideo(Map<String, dynamic> video) async {
     final channelId = (video['channel_id'] ?? '').toString();
     final videoId = (video['video_id'] ?? '').toString();
@@ -1448,19 +1735,48 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           }
         }
       }
+
+      if (channelId.isNotEmpty) {
+        for (final displayed in channels) {
+          if ((displayed['channel_id'] ?? '').toString() != channelId) continue;
+          for (final saved in _localChannels) {
+            if ((saved['channel_id'] ?? '').toString() == channelId) {
+              _mergeUsageCounts(saved, displayed, isChannel: true);
+              break;
+            }
+          }
+        }
+      }
+      if (videoId.isNotEmpty) {
+        for (final displayed in videos) {
+          if ((displayed['video_id'] ?? '').toString() != videoId) continue;
+          for (final saved in _localVideos) {
+            if ((saved['video_id'] ?? '').toString() == videoId) {
+              _mergeUsageCounts(saved, displayed);
+              break;
+            }
+          }
+        }
+      }
     });
+
+    await _saveWatchCountsLocally(channelId, videoId);
 
     if (!isStandaloneMode && videoId.isNotEmpty) {
       try {
-        http.post(
-          Uri.parse('$baseUrl/api/videos/${Uri.encodeComponent(videoId)}/watch'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'device': _deviceType,
-            'channel_id': channelId,
-            'video_id': videoId,
-          }),
-        );
+        await http
+            .post(
+              Uri.parse(
+                '$baseUrl/api/videos/${Uri.encodeComponent(videoId)}/watch',
+              ),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'device': _deviceType,
+                'channel_id': channelId,
+                'video_id': videoId,
+              }),
+            )
+            .timeout(const Duration(seconds: 3));
       } catch (_) {}
     }
 
@@ -1504,7 +1820,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     if (!isStandaloneMode) {
       try {
         await http.post(
-          Uri.parse('$baseUrl/api/channels/${Uri.encodeComponent(channelId)}/unfollow'),
+          Uri.parse(
+            '$baseUrl/api/channels/${Uri.encodeComponent(channelId)}/unfollow',
+          ),
         );
       } catch (_) {}
     }
@@ -1654,7 +1972,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF1E1E1E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Row(
             children: [
               Icon(Icons.usb, color: Colors.cyanAccent),
@@ -1678,7 +1998,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      _isHpDevice ? Icons.phone_android : Icons.laptop_chromebook,
+                      _isHpDevice
+                          ? Icons.phone_android
+                          : Icons.laptop_chromebook,
                       color: Colors.amberAccent,
                       size: 26,
                     ),
@@ -1686,7 +2008,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     Expanded(
                       child: Text(
                         'Perangkat ini: ${_isHpDevice ? "📱 HP Android" : "💻 Laptop / Desktop"}\n• Tulis: views_${_isHpDevice ? "hp" : "laptop"}\n• Terima: views_${_isHpDevice ? "laptop" : "hp"}',
-                        style: const TextStyle(fontSize: 12, color: Colors.white70),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white70,
+                        ),
                       ),
                     ),
                   ],
@@ -1726,8 +2051,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         side: const BorderSide(color: Colors.white24),
                         padding: const EdgeInsets.symmetric(vertical: 8),
                       ),
-                      icon: const Icon(Icons.download, size: 16, color: Colors.greenAccent),
-                      label: const Text('Export JSON', style: TextStyle(fontSize: 12, color: Colors.white)),
+                      icon: const Icon(
+                        Icons.download,
+                        size: 16,
+                        color: Colors.greenAccent,
+                      ),
+                      label: const Text(
+                        'Export JSON',
+                        style: TextStyle(fontSize: 12, color: Colors.white),
+                      ),
                       onPressed: () async {
                         Navigator.pop(ctx);
                         await _exportSyncJson();
@@ -1741,8 +2073,15 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                         side: const BorderSide(color: Colors.white24),
                         padding: const EdgeInsets.symmetric(vertical: 8),
                       ),
-                      icon: const Icon(Icons.upload, size: 16, color: Colors.orangeAccent),
-                      label: const Text('Import JSON', style: TextStyle(fontSize: 12, color: Colors.white)),
+                      icon: const Icon(
+                        Icons.upload,
+                        size: 16,
+                        color: Colors.orangeAccent,
+                      ),
+                      label: const Text(
+                        'Import JSON',
+                        style: TextStyle(fontSize: 12, color: Colors.white),
+                      ),
                       onPressed: () async {
                         Navigator.pop(ctx);
                         await _importSyncJson();
@@ -1756,7 +2095,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Tutup', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'Tutup',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
           ],
         );
@@ -1787,11 +2129,13 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 'video_id': v['video_id'],
                 'views_hp': v['views_hp'] ?? 0,
                 'views_laptop': v['views_laptop'] ?? 0,
-                'updated_at': v['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
-              }
+                'updated_at':
+                    v['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+              },
         ],
         'channels': [
-          for (final c in (_localChannels.isNotEmpty ? _localChannels : channels))
+          for (final c
+              in (_localChannels.isNotEmpty ? _localChannels : channels))
             {
               'channel_id': c['channel_id'],
               'title': c['title'],
@@ -1799,9 +2143,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               'views_hp': c['views_hp'] ?? 0,
               'views_laptop': c['views_laptop'] ?? 0,
               'status': c['status'] ?? 'subscribed',
-              'region': c['region'] ?? 'Nasional',
-              'updated_at': c['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
-            }
+              'region': c['region'] ?? 'Belum diketahui',
+              'updated_at':
+                  c['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+            },
         ],
       };
 
@@ -1818,11 +2163,13 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       };
       for (final cand in candidates) {
         try {
-          final r = await http.post(
-            Uri.parse('$cand/api/sync/exchange'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(payload),
-          ).timeout(const Duration(seconds: 5));
+          final r = await http
+              .post(
+                Uri.parse('$cand/api/sync/exchange'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(payload),
+              )
+              .timeout(const Duration(seconds: 5));
           if (r.statusCode == 200) {
             baseUrl = cand;
             syncResp = r;
@@ -1839,17 +2186,23 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         final remoteVids = (data['videos'] as List?) ?? [];
         final remoteChs = (data['channels'] as List?) ?? [];
 
-        final remoteVidMap = {for (final v in remoteVids) (v['video_id'] ?? '').toString(): v};
-        final remoteChMap = {for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c};
+        final remoteVidMap = {
+          for (final v in remoteVids) (v['video_id'] ?? '').toString(): v,
+        };
+        final remoteChMap = {
+          for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c,
+        };
 
         for (final v in _localVideos) {
           final vid = (v['video_id'] ?? '').toString();
           if (remoteVidMap.containsKey(vid)) {
             final rv = remoteVidMap[vid];
             final rHp = int.tryParse((rv['views_hp'] ?? 0).toString()) ?? 0;
-            final rLap = int.tryParse((rv['views_laptop'] ?? 0).toString()) ?? 0;
+            final rLap =
+                int.tryParse((rv['views_laptop'] ?? 0).toString()) ?? 0;
             final curHp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
-            final curLap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
+            final curLap =
+                int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
             final nextHp = curHp > rHp ? curHp : rHp;
             final nextLap = curLap > rLap ? curLap : rLap;
             v['views_hp'] = nextHp;
@@ -1866,9 +2219,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           if (remoteChMap.containsKey(cid)) {
             final rc = remoteChMap[cid];
             final rHp = int.tryParse((rc['views_hp'] ?? 0).toString()) ?? 0;
-            final rLap = int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
+            final rLap =
+                int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
             final curHp = int.tryParse((c['views_hp'] ?? 0).toString()) ?? 0;
-            final curLap = int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
+            final curLap =
+                int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
             final nextHp = curHp > rHp ? curHp : rHp;
             final nextLap = curLap > rLap ? curLap : rLap;
             c['views_hp'] = nextHp;
@@ -1909,7 +2264,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           ),
         );
       } else {
-        throw Exception('Tidak dapat terhubung ke Laptop via kabel USB. Pastikan backend di laptop menyala.');
+        throw Exception(
+          'Tidak dapat terhubung ke Laptop via kabel USB. Pastikan backend di laptop menyala.',
+        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -1920,7 +2277,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.redAccent,
-          content: Text('⚠️ Gagal Sync USB: ${e.toString().replaceAll("Exception: ", "")}'),
+          content: Text(
+            '⚠️ Gagal Sync USB: ${e.toString().replaceAll("Exception: ", "")}',
+          ),
         ),
       );
     }
@@ -1938,9 +2297,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               'video_id': v['video_id'],
               'views_hp': v['views_hp'] ?? 0,
               'views_laptop': v['views_laptop'] ?? 0,
-              'region': v['region'] ?? 'Nasional',
-              'updated_at': v['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
-            }
+              'region': v['region'] ?? 'Belum diketahui',
+              'updated_at':
+                  v['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+            },
       ],
       'channels': [
         for (final c in (_localChannels.isNotEmpty ? _localChannels : channels))
@@ -1951,9 +2311,10 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             'views_hp': c['views_hp'] ?? 0,
             'views_laptop': c['views_laptop'] ?? 0,
             'status': c['status'] ?? 'subscribed',
-            'region': c['region'] ?? 'Nasional',
-            'updated_at': c['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
-          }
+            'region': c['region'] ?? 'Belum diketahui',
+            'updated_at':
+                c['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+          },
       ],
     };
     final jsonStr = jsonEncode(payload);
@@ -1962,7 +2323,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Color(0xFF1B5E20),
-          content: Text('📋 Paket data sync (.json) berhasil disalin ke Clipboard!'),
+          content: Text(
+            '📋 Paket data sync (.json) berhasil disalin ke Clipboard!',
+          ),
         ),
       );
     }
@@ -1975,18 +2338,29 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text('Import Paket Data Sync', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          title: const Text(
+            'Import Paket Data Sync',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Tempelkan isi JSON data sync dari perangkat lain:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              const Text(
+                'Tempelkan isi JSON data sync dari perangkat lain:',
+                style: TextStyle(fontSize: 12, color: Colors.white70),
+              ),
               const SizedBox(height: 8),
               TextField(
                 controller: ctrl,
                 maxLines: 6,
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.white),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: Colors.white,
+                ),
                 decoration: const InputDecoration(
-                  hintText: '{"device": "...", "videos": [...], "channels": [...]}',
+                  hintText:
+                      '{"device": "...", "videos": [...], "channels": [...]}',
                   hintStyle: TextStyle(color: Colors.white24, fontSize: 11),
                   filled: true,
                   fillColor: Color(0xFF282828),
@@ -1996,9 +2370,18 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal', style: TextStyle(color: Colors.white54))),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Batal',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF0033), foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF0033),
+                foregroundColor: Colors.white,
+              ),
               onPressed: () {
                 Navigator.pop(ctx);
                 _applySyncDataString(ctrl.text);
@@ -2016,8 +2399,12 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       final data = jsonDecode(rawJson.trim());
       final remoteVids = (data['videos'] as List?) ?? [];
       final remoteChs = (data['channels'] as List?) ?? [];
-      final remoteVidMap = {for (final v in remoteVids) (v['video_id'] ?? '').toString(): v};
-      final remoteChMap = {for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c};
+      final remoteVidMap = {
+        for (final v in remoteVids) (v['video_id'] ?? '').toString(): v,
+      };
+      final remoteChMap = {
+        for (final c in remoteChs) (c['channel_id'] ?? '').toString(): c,
+      };
 
       setState(() {
         for (final v in _localVideos) {
@@ -2025,9 +2412,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           if (remoteVidMap.containsKey(vid)) {
             final rv = remoteVidMap[vid];
             final rHp = int.tryParse((rv['views_hp'] ?? 0).toString()) ?? 0;
-            final rLap = int.tryParse((rv['views_laptop'] ?? 0).toString()) ?? 0;
+            final rLap =
+                int.tryParse((rv['views_laptop'] ?? 0).toString()) ?? 0;
             final curHp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
-            final curLap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
+            final curLap =
+                int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
             final nextHp = curHp > rHp ? curHp : rHp;
             final nextLap = curLap > rLap ? curLap : rLap;
             v['views_hp'] = nextHp;
@@ -2043,9 +2432,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           if (remoteChMap.containsKey(cid)) {
             final rc = remoteChMap[cid];
             final rHp = int.tryParse((rc['views_hp'] ?? 0).toString()) ?? 0;
-            final rLap = int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
+            final rLap =
+                int.tryParse((rc['views_laptop'] ?? 0).toString()) ?? 0;
             final curHp = int.tryParse((c['views_hp'] ?? 0).toString()) ?? 0;
-            final curLap = int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
+            final curLap =
+                int.tryParse((c['views_laptop'] ?? 0).toString()) ?? 0;
             final nextHp = curHp > rHp ? curHp : rHp;
             final nextLap = curLap > rLap ? curLap : rLap;
             c['views_hp'] = nextHp;
@@ -2064,12 +2455,17 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF1B5E20),
-          content: Text('✅ Import sync berhasil! (${remoteVids.length} video, ${remoteChs.length} channel)'),
+          content: Text(
+            '✅ Import sync berhasil! (${remoteVids.length} video, ${remoteChs.length} channel)',
+          ),
         ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text('⚠️ Format JSON tidak valid: $e')),
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('⚠️ Format JSON tidak valid: $e'),
+        ),
       );
     }
   }
@@ -2643,7 +3039,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 alignment: Alignment.center,
                 children: [
                   CircularProgressIndicator(
-                    value: usbSyncProgress > 0 ? (usbSyncProgress / 100.0) : null,
+                    value: usbSyncProgress > 0
+                        ? (usbSyncProgress / 100.0)
+                        : null,
                     strokeWidth: 2.2,
                     color: Colors.cyanAccent,
                   ),
@@ -2686,7 +3084,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       onPressed: _performDirectUsbSync,
       icon: const Icon(Icons.usb, size: 16, color: Colors.cyanAccent),
       label: Text(
-        isMobile ? 'Sync USB' : (_isHpDevice ? 'Sync Laptop (USB)' : 'Sync HP (USB)'),
+        isMobile
+            ? 'Sync USB'
+            : (_isHpDevice ? 'Sync Laptop (USB)' : 'Sync HP (USB)'),
         style: const TextStyle(
           color: Colors.white,
           fontSize: 11.5,
@@ -2714,7 +3114,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 alignment: Alignment.center,
                 children: [
                   CircularProgressIndicator(
-                    value: refreshProgress > 0 ? (refreshProgress / 100.0) : null,
+                    value: refreshProgress > 0
+                        ? (refreshProgress / 100.0)
+                        : null,
                     strokeWidth: 2.2,
                     color: Colors.white,
                   ),
@@ -2729,8 +3131,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         refreshingYouTube
             ? '$refreshProgress%'
             : (refreshReadyGreen
-                ? (isMobile ? 'Siap' : '100% Siap')
-                : (isMobile ? 'Refresh' : 'Refresh YouTube')),
+                  ? (isMobile ? 'Siap' : '100% Siap')
+                  : (isMobile ? 'Refresh' : 'Refresh YouTube')),
         style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
       ),
       style: ElevatedButton.styleFrom(
@@ -2893,7 +3295,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       ] else ...[
                         // Pada HP: Menu Popup 3 Titik (Menghilangkan Right Overflow 49px sama sekali!)
                         PopupMenuButton<String>(
-                          icon: const Icon(Icons.more_vert, color: Colors.white, size: 22),
+                          icon: const Icon(
+                            Icons.more_vert,
+                            color: Colors.white,
+                            size: 22,
+                          ),
                           tooltip: 'Menu Lainnya',
                           color: const Color(0xFF212121),
                           onSelected: (val) {
@@ -2908,9 +3314,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                               value: 'add',
                               child: Row(
                                 children: [
-                                  Icon(Icons.person_add_alt_1, size: 18, color: Colors.white),
+                                  Icon(
+                                    Icons.person_add_alt_1,
+                                    size: 18,
+                                    color: Colors.white,
+                                  ),
                                   SizedBox(width: 10),
-                                  Text('Tambah Channel', style: TextStyle(fontSize: 13)),
+                                  Text(
+                                    'Tambah Channel',
+                                    style: TextStyle(fontSize: 13),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2918,9 +3331,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                               value: 'csv',
                               child: Row(
                                 children: [
-                                  Icon(Icons.table_view, size: 18, color: Colors.greenAccent),
+                                  Icon(
+                                    Icons.table_view,
+                                    size: 18,
+                                    color: Colors.greenAccent,
+                                  ),
                                   SizedBox(width: 10),
-                                  Text('Export Excel / CSV', style: TextStyle(fontSize: 13)),
+                                  Text(
+                                    'Export Excel / CSV',
+                                    style: TextStyle(fontSize: 13),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2928,9 +3348,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                               value: 'export_sync',
                               child: Row(
                                 children: [
-                                  Icon(Icons.upload, size: 18, color: Colors.cyanAccent),
+                                  Icon(
+                                    Icons.upload,
+                                    size: 18,
+                                    color: Colors.cyanAccent,
+                                  ),
                                   SizedBox(width: 10),
-                                  Text('Salin JSON Sync', style: TextStyle(fontSize: 13)),
+                                  Text(
+                                    'Salin JSON Sync',
+                                    style: TextStyle(fontSize: 13),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2938,9 +3365,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                               value: 'import_sync',
                               child: Row(
                                 children: [
-                                  Icon(Icons.download, size: 18, color: Colors.cyanAccent),
+                                  Icon(
+                                    Icons.download,
+                                    size: 18,
+                                    color: Colors.cyanAccent,
+                                  ),
                                   SizedBox(width: 10),
-                                  Text('Tempel JSON Sync', style: TextStyle(fontSize: 13)),
+                                  Text(
+                                    'Tempel JSON Sync',
+                                    style: TextStyle(fontSize: 13),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2948,9 +3382,16 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                               value: 'settings',
                               child: Row(
                                 children: [
-                                  Icon(Icons.settings, size: 18, color: Colors.amberAccent),
+                                  Icon(
+                                    Icons.settings,
+                                    size: 18,
+                                    color: Colors.amberAccent,
+                                  ),
                                   SizedBox(width: 10),
-                                  Text('Pengaturan API & IP', style: TextStyle(fontSize: 13)),
+                                  Text(
+                                    'Pengaturan API & IP',
+                                    style: TextStyle(fontSize: 13),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2978,10 +3419,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (isMobile) ...[
-                  _buildMobileQuickControlBar(),
-                  _buildMobileActiveFilterBar(),
-                ],
+                if (isMobile) ...[_buildMobileQuickControlBar()],
                 if (!isMobile) _buildFilterAndSortHeader(false),
                 Expanded(
                   child: loading
@@ -3048,94 +3486,104 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 ),
               ),
               const Divider(color: Color(0xFF272727), height: 18),
-              ...channels.where((ch) {
-                if (selectedRegion != 'all') {
-                  return (ch['region'] ?? 'Nasional').toString() == selectedRegion;
-                }
-                return true;
-              }).map((ch) {
-                final cid = (ch['channel_id'] ?? '').toString();
-                final title = (ch['title'] ?? '').toString();
-                final reg = (ch['region'] ?? 'Nasional').toString();
-                final cHp = int.tryParse((ch['views_hp'] ?? 0).toString()) ?? 0;
-                final cLap = int.tryParse((ch['views_laptop'] ?? 0).toString()) ?? 0;
-                final watchedCount =
-                    int.tryParse((ch['views_total'] ?? ch['watched_count'] ?? 0).toString()) ?? (cHp + cLap);
-                final isSelected = selectedChannelId == cid;
-                return Tooltip(
-                  message: '$title\nTotal: $watchedCount view (📱 HP: $cHp | 💻 Laptop: $cLap)\nWilayah: $reg',
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => _selectChannelTab(cid),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? const Color(0xFF272727)
-                            : Colors.transparent,
+              ...channels
+                  .where((ch) {
+                    if (selectedRegion != 'all') {
+                      return (ch['region'] ?? 'Belum diketahui').toString() ==
+                          selectedRegion;
+                    }
+                    return true;
+                  })
+                  .map((ch) {
+                    final cid = (ch['channel_id'] ?? '').toString();
+                    final title = (ch['title'] ?? '').toString();
+                    final reg = (ch['region'] ?? 'Belum diketahui').toString();
+                    final cHp =
+                        int.tryParse((ch['views_hp'] ?? 0).toString()) ?? 0;
+                    final cLap =
+                        int.tryParse((ch['views_laptop'] ?? 0).toString()) ?? 0;
+                    final watchedCount =
+                        int.tryParse(
+                          (ch['views_total'] ?? ch['watched_count'] ?? 0)
+                              .toString(),
+                        ) ??
+                        (cHp + cLap);
+                    final isSelected = selectedChannelId == cid;
+                    return Tooltip(
+                      message:
+                          '$title\nTotal: $watchedCount view (📱 HP: $cHp | 💻 Laptop: $cLap)\nWilayah: $reg',
+                      child: InkWell(
                         borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Center(
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            CircleAvatar(
-                              radius: 16,
-                              backgroundColor: const Color(0xFF383838),
-                              backgroundImage:
-                                  (ch['thumbnail_url'] ?? '')
-                                      .toString()
-                                      .isNotEmpty
-                                  ? NetworkImage(ch['thumbnail_url'])
-                                  : null,
-                              onBackgroundImageError:
-                                  (ch['thumbnail_url'] ?? '')
-                                      .toString()
-                                      .isNotEmpty
-                                  ? (_, _) {}
-                                  : null,
-                              child: Text(
-                                title.isNotEmpty ? title[0] : '?',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white70,
-                                ),
-                              ),
-                            ),
-                            if (watchedCount > 0)
-                              Positioned(
-                                right: -4,
-                                bottom: -4,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF1E3A2F),
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: const Color(0xFF2E7D32),
-                                      width: 0.8,
-                                    ),
-                                  ),
+                        onTap: () => _selectChannelTab(cid),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFF272727)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Center(
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: const Color(0xFF383838),
+                                  backgroundImage:
+                                      (ch['thumbnail_url'] ?? '')
+                                          .toString()
+                                          .isNotEmpty
+                                      ? NetworkImage(ch['thumbnail_url'])
+                                      : null,
+                                  onBackgroundImageError:
+                                      (ch['thumbnail_url'] ?? '')
+                                          .toString()
+                                          .isNotEmpty
+                                      ? (_, _) {}
+                                      : null,
                                   child: Text(
-                                    '$watchedCount',
+                                    title.isNotEmpty ? title[0] : '?',
                                     style: const TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF81C784),
+                                      fontSize: 11,
+                                      color: Colors.white70,
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
+                                if (watchedCount > 0)
+                                  Positioned(
+                                    right: -4,
+                                    bottom: -4,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1E3A2F),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: const Color(0xFF2E7D32),
+                                          width: 0.8,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '$watchedCount',
+                                        style: const TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF81C784),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                );
-              }),
+                    );
+                  }),
             ],
           ),
         ),
@@ -3178,149 +3626,159 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 ),
             ],
           ),
-            const Divider(color: Color(0xFF272727), height: 24),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Text(
-                'Subscriptions ›',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
+          const Divider(color: Color(0xFF272727), height: 24),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Text(
+              'Subscriptions ›',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
-            ...channels.where((ch) {
-              if (selectedRegion != 'all') {
-                return (ch['region'] ?? 'Nasional').toString() == selectedRegion;
-              }
-              return true;
-            }).map((ch) {
-              final cid = (ch['channel_id'] ?? '').toString();
-              final title = (ch['title'] ?? '').toString();
-              final reg = (ch['region'] ?? 'Nasional').toString();
-              final cHp = int.tryParse((ch['views_hp'] ?? 0).toString()) ?? 0;
-              final cLap = int.tryParse((ch['views_laptop'] ?? 0).toString()) ?? 0;
-              final watchedCount =
-                  int.tryParse((ch['views_total'] ?? ch['watched_count'] ?? 0).toString()) ?? (cHp + cLap);
-              final isSelected = selectedChannelId == cid;
-              return Tooltip(
-                message: '$title\nTotal: $watchedCount view (📱 HP: $cHp | 💻 Laptop: $cLap)\nWilayah: $reg',
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: () => _selectChannelTab(cid),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? const Color(0xFF272727)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 14,
-                          backgroundColor: const Color(0xFF383838),
-                          backgroundImage:
-                              (ch['thumbnail_url'] ?? '').toString().isNotEmpty
-                              ? NetworkImage(ch['thumbnail_url'])
-                              : null,
-                          onBackgroundImageError:
-                              (ch['thumbnail_url'] ?? '').toString().isNotEmpty
-                              ? (_, _) {}
-                              : null,
-                          child: Text(
-                            title.isNotEmpty ? title[0] : '?',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.white70,
+          ),
+          ...channels
+              .where((ch) {
+                if (selectedRegion != 'all') {
+                  return (ch['region'] ?? 'Belum diketahui').toString() ==
+                      selectedRegion;
+                }
+                return true;
+              })
+              .map((ch) {
+                final cid = (ch['channel_id'] ?? '').toString();
+                final title = (ch['title'] ?? '').toString();
+                final reg = (ch['region'] ?? 'Belum diketahui').toString();
+                final cHp = int.tryParse((ch['views_hp'] ?? 0).toString()) ?? 0;
+                final cLap =
+                    int.tryParse((ch['views_laptop'] ?? 0).toString()) ?? 0;
+                final watchedCount =
+                    int.tryParse(
+                      (ch['views_total'] ?? ch['watched_count'] ?? 0)
+                          .toString(),
+                    ) ??
+                    (cHp + cLap);
+                final isSelected = selectedChannelId == cid;
+                return Tooltip(
+                  message:
+                      '$title\nTotal: $watchedCount view (📱 HP: $cHp | 💻 Laptop: $cLap)\nWilayah: $reg',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => _selectChannelTab(cid),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? const Color(0xFF272727)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 14,
+                            backgroundColor: const Color(0xFF383838),
+                            backgroundImage:
+                                (ch['thumbnail_url'] ?? '')
+                                    .toString()
+                                    .isNotEmpty
+                                ? NetworkImage(ch['thumbnail_url'])
+                                : null,
+                            onBackgroundImageError:
+                                (ch['thumbnail_url'] ?? '')
+                                    .toString()
+                                    .isNotEmpty
+                                ? (_, _) {}
+                                : null,
+                            child: Text(
+                              title.isNotEmpty ? title[0] : '?',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white70,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 13.5,
-                                    fontWeight: isSelected
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 13.5,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                reg == 'Nasional' ? '🇮🇩' : '🌍',
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: watchedCount > 0
-                                ? const Color(0xFF1E3A2F)
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '$watchedCount',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: watchedCount > 0
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                              color: watchedCount > 0
-                                  ? const Color(0xFF81C784)
-                                  : Colors.white54,
+                                const SizedBox(width: 4),
+                                Text(
+                                  reg == 'Nasional' ? '🇮🇩' : '🌍',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ],
                             ),
                           ),
-                        ),
-                      ],
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: watchedCount > 0
+                                  ? const Color(0xFF1E3A2F)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '$watchedCount',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: watchedCount > 0
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                color: watchedCount > 0
+                                    ? const Color(0xFF81C784)
+                                    : Colors.white54,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            }),
-            const Divider(color: Color(0xFF272727), height: 28),
-            _sidebarTile(
-              icon: Icons.usb,
-              title: 'Sync USB (HP ⇄ Laptop)',
-              selected: false,
-              onTap: _showUsbSyncDialog,
-            ),
-            _sidebarTile(
-              icon: Icons.download_for_offline_outlined,
-              title: 'Export Excel/CSV',
-              selected: false,
-              onTap: _exportExcelCsv,
-            ),
-            _sidebarTile(
-              icon: Icons.sync,
-              title: 'Sync & API Key',
-              selected: false,
-              onTap: _showApiSettingsModal,
-            ),
-          ],
-        ),
-      );
+                );
+              }),
+          const Divider(color: Color(0xFF272727), height: 28),
+          _sidebarTile(
+            icon: Icons.usb,
+            title: 'Sync USB (HP ⇄ Laptop)',
+            selected: false,
+            onTap: _showUsbSyncDialog,
+          ),
+          _sidebarTile(
+            icon: Icons.download_for_offline_outlined,
+            title: 'Export Excel/CSV',
+            selected: false,
+            onTap: _exportExcelCsv,
+          ),
+          _sidebarTile(
+            icon: Icons.sync,
+            title: 'Sync & API Key',
+            selected: false,
+            onTap: _showApiSettingsModal,
+          ),
+        ],
+      ),
+    );
     if (forceFull) {
       return sidebarContent;
     }
-    return SizedBox(
-      width: isNarrow ? 190 : 240,
-      child: sidebarContent,
-    );
+    return SizedBox(width: isNarrow ? 190 : 240, child: sidebarContent);
   }
 
   Widget _sidebarTile({
@@ -3458,39 +3916,43 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: [
-                        ('all', '🌐 Semua'),
-                        ('Nasional', '🇮🇩 Nasional'),
-                        ('Internasional', '🌍 Internasional'),
-                      ].map((reg) {
-                        final active = selectedRegion == reg.$1;
-                        return ChoiceChip(
-                          label: Text(reg.$2),
-                          selected: active,
-                          selectedColor: reg.$1 == 'Nasional'
-                              ? const Color(0xFFD32F2F)
-                              : (reg.$1 == 'Internasional'
-                                  ? const Color(0xFF1976D2)
-                                  : Colors.white),
-                          backgroundColor: const Color(0xFF2C2C2C),
-                          labelStyle: TextStyle(
-                            color: active
-                                ? (reg.$1 == 'all' ? Colors.black : Colors.white)
-                                : Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12.5,
-                          ),
-                          onSelected: (_) {
-                            setState(() {
-                              selectedRegion = reg.$1;
-                              currentPage = 1;
-                            });
-                            setModalState(() {});
-                            _saveUiPreferences();
-                            _fetchVideos();
-                          },
-                        );
-                      }).toList(),
+                      children:
+                          [
+                            ('all', '🌐 Semua'),
+                            ('Nasional', '🇮🇩 Nasional'),
+                            ('Internasional', '🌍 Internasional'),
+                            ('Belum diketahui', 'Belum diketahui'),
+                          ].map((reg) {
+                            final active = selectedRegion == reg.$1;
+                            return ChoiceChip(
+                              label: Text(reg.$2),
+                              selected: active,
+                              selectedColor: reg.$1 == 'Nasional'
+                                  ? const Color(0xFFD32F2F)
+                                  : (reg.$1 == 'Internasional'
+                                        ? const Color(0xFF1976D2)
+                                        : Colors.white),
+                              backgroundColor: const Color(0xFF2C2C2C),
+                              labelStyle: TextStyle(
+                                color: active
+                                    ? (reg.$1 == 'all'
+                                          ? Colors.black
+                                          : Colors.white)
+                                    : Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12.5,
+                              ),
+                              onSelected: (_) {
+                                setState(() {
+                                  selectedRegion = reg.$1;
+                                  currentPage = 1;
+                                });
+                                setModalState(() {});
+                                _saveUiPreferences();
+                                _fetchVideos();
+                              },
+                            );
+                          }).toList(),
                     ),
                     const SizedBox(height: 14),
                     const Text(
@@ -3514,7 +3976,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           backgroundColor: const Color(0xFF2C2C2C),
                           labelStyle: TextStyle(
                             color: active ? Colors.black : Colors.white,
-                            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                            fontWeight: active
+                                ? FontWeight.bold
+                                : FontWeight.normal,
                             fontSize: 12.5,
                           ),
                           onSelected: (_) {
@@ -3550,7 +4014,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                           backgroundColor: const Color(0xFF2C2C2C),
                           labelStyle: TextStyle(
                             color: Colors.white,
-                            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                            fontWeight: active
+                                ? FontWeight.bold
+                                : FontWeight.normal,
                             fontSize: 12.5,
                           ),
                           onSelected: (_) {
@@ -3637,91 +4103,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
   }
 
   Widget _buildMobileQuickControlBar() {
-    String activeChannelName = 'Pilih Channel (${channels.length})';
-    if (selectedChannelId.isNotEmpty) {
-      for (final ch in channels) {
-        if ((ch['channel_id'] ?? '').toString() == selectedChannelId) {
-          activeChannelName = (ch['title'] ?? selectedChannelId).toString();
-          break;
-        }
-      }
-    }
-
     return Container(
       color: const Color(0xFF0F0F0F),
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
       child: Row(
         children: [
-          // Tombol Besar Kiri: Buka Drawer Channel
-          Expanded(
-            child: SizedBox(
-              height: 40,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: selectedChannelId.isNotEmpty
-                      ? const Color(0xFF1E3A2F)
-                      : const Color(0xFF222222),
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    side: BorderSide(
-                      color: selectedChannelId.isNotEmpty
-                          ? const Color(0xFF2E7D32)
-                          : const Color(0xFF3A3A3A),
-                    ),
-                  ),
-                ),
-                icon: Icon(
-                  selectedChannelId.isNotEmpty
-                      ? Icons.check_circle
-                      : Icons.subscriptions_outlined,
-                  size: 17,
-                  color: selectedChannelId.isNotEmpty
-                      ? Colors.lightGreenAccent
-                      : Colors.redAccent,
-                ),
-                label: Text(
-                  activeChannelName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                onPressed: () {
-                  _scaffoldKey.currentState?.openDrawer();
-                },
-              ),
-            ),
-          ),
-          // Tombol Reset ke Semua Channel jika channel sedang dipilih
-          if (selectedChannelId.isNotEmpty || searchQuery.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            SizedBox(
-              height: 40,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: const Color(0xFF222222),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  side: const BorderSide(color: Color(0xFF3A3A3A)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                onPressed: () => _selectChannelTab(''),
-                child: const Icon(
-                  Icons.home_filled,
-                  size: 18,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(width: 8),
           // Tombol Besar Kanan: Buka Filter Bottom Sheet
           Expanded(
             child: SizedBox(
@@ -3774,6 +4160,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
               ('all', '🌐 Semua'),
               ('Nasional', '🇮🇩 Nasional'),
               ('Internasional', '🌍 Internasional'),
+              ('Belum diketahui', 'Belum diketahui'),
             ].map((reg) {
               final active = selectedRegion == reg.$1;
               return Padding(
@@ -3784,8 +4171,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                   selectedColor: reg.$1 == 'Nasional'
                       ? const Color(0xFFD32F2F)
                       : (reg.$1 == 'Internasional'
-                          ? const Color(0xFF1976D2)
-                          : Colors.white),
+                            ? const Color(0xFF1976D2)
+                            : Colors.white),
                   backgroundColor: const Color(0xFF222222),
                   labelStyle: TextStyle(
                     color: active
@@ -3872,8 +4259,8 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       final regionLabel = selectedRegion == 'Nasional'
           ? '🇮🇩 Nasional'
           : (selectedRegion == 'Internasional'
-              ? '🌍 Internasional'
-              : '🌐 Semua Wilayah');
+                ? '🌍 Internasional'
+                : '🌐 Semua Wilayah');
       return Container(
         color: const Color(0xFF0F0F0F),
         padding: EdgeInsets.symmetric(
@@ -3955,6 +4342,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
         ('all', '🌐 Semua'),
         ('Nasional', '🇮🇩 Nasional'),
         ('Internasional', '🌍 Internasional'),
+        ('Belum diketahui', 'Belum diketahui'),
       ].map((reg) {
         final active = selectedRegion == reg.$1;
         return ChoiceChip(
@@ -3962,10 +4350,14 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
           selected: active,
           selectedColor: reg.$1 == 'Nasional'
               ? const Color(0xFFD32F2F)
-              : (reg.$1 == 'Internasional' ? const Color(0xFF1976D2) : Colors.white),
+              : (reg.$1 == 'Internasional'
+                    ? const Color(0xFF1976D2)
+                    : Colors.white),
           backgroundColor: const Color(0xFF272727),
           labelStyle: TextStyle(
-            color: active ? (reg.$1 == 'all' ? Colors.black : Colors.white) : Colors.white,
+            color: active
+                ? (reg.$1 == 'all' ? Colors.black : Colors.white)
+                : Colors.white,
             fontWeight: FontWeight.w600,
             fontSize: 13,
           ),
@@ -4448,10 +4840,11 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
     final duration = (v['duration'] ?? '').toString();
     final vHp = int.tryParse((v['views_hp'] ?? 0).toString()) ?? 0;
     final vLap = int.tryParse((v['views_laptop'] ?? 0).toString()) ?? 0;
-    final vTot = int.tryParse((v['views_total'] ?? 0).toString()) ?? (vHp + vLap);
+    final vTot =
+        int.tryParse((v['views_total'] ?? 0).toString()) ?? (vHp + vLap);
     final creatorWatched = _getCreatorWatchedCount(channelId, v);
     final watchedCount = vTot > 0 ? vTot : creatorWatched;
-    final videoRegion = (v['region'] ?? 'Nasional').toString();
+    final videoRegion = (v['region'] ?? 'Belum diketahui').toString();
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -4545,7 +4938,7 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       children: [
                         Flexible(
                           child: Text(
-                            '$channelTitle ${videoRegion == "Nasional" ? "🇮🇩" : "🌍"}',
+                            '$channelTitle ${videoRegion == "Nasional" ? "🇮🇩" : (videoRegion == "Internasional" ? "🌍" : "❔")}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(

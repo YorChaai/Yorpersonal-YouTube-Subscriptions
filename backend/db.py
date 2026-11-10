@@ -8,36 +8,34 @@ from pathlib import Path
 DB_PATH = Path(__file__).parent / "youtube_personal.db"
 
 ID_KEYWORDS = {
-    "indonesia", "nusantara", "sejarah", "sarjana", "bicara", "cerita", "horor", "tongkrongan",
-    "berkelas", "revolusi", "santai", "kepo", "terang", "menit", "hukum", "politik", "opini",
-    "kompas", "detik", "tribun", "liputan", "tempo", "kumparan", "merdeka", "suara", "tvone",
-    "inews", "trans7", "antv", "sctv", "mnc", "rcti", "netmediatama", "narasi", "mojok",
-    "asumsi", "tirto", "katadata", "idntimes", "fajrul", "ferry", "raditya", "radit", "malaka",
-    "irwandi", "dea", "leonardo", "eno", "raymond", "sumargo", "curhat", "timothy", "ronald",
-    "corbuzier", "yahya", "milyhya", "hapsah", "tretan", "choki", "pandji", "standup",
-    "ngobrol", "bocah", "kabar", "warta", "sinema", "jawa", "sunda", "bali", "jakarta",
-    "bandung", "jogja", "surabaya", "indo", "indonesian", "film", "misteri", "hiburan",
-    "belajar", "resep", "kuliner", "makan", "masak", "dapur", "anak", "islam", "dakwah",
-    "ustadz", "kajian", "gus", "habib", "santri", "pesantren", "berita", "fakta",
-    "gadgetin", "jagat", "sobat", "ruang", "bumi", "kreatif", "karya",
+    "indonesia", "indonesian", "nusantara", "jawa", "sunda", "jakarta", "bandung",
+    "jogja", "yogyakarta", "surabaya", "kompas", "detik", "tribun", "liputan",
+    "tempo", "kumparan", "tvone", "inews", "trans7", "antv", "sctv", "netmediatama",
+    "narasi", "mojok", "asumsi", "tirto", "katadata", "idntimes", "gadgetin",
+    "fajrul", "ferry", "raditya", "radit", "malaka", "irwandi", "sumargo",
+    "corbuzier", "milyhya", "hapsah", "tretan", "choki", "pandji",
 }
 
 
 def classify_region(title: str, handle: str = "", country: str = "", default_lang: str = "") -> str:
     cntry = (country or "").strip().upper()
     lang = (default_lang or "").strip().lower()
-    if cntry == "ID" or lang.startswith("id"):
+    if cntry == "ID":
+        return "Nasional"
+    if cntry:
+        return "Internasional"
+    # Indonesian metadata is a positive local signal. Another language alone
+    # does not prove the creator is outside Indonesia.
+    if lang == "id" or lang.startswith("id-"):
         return "Nasional"
     text = f"{title or ''} {handle or ''}".lower()
     words = re.findall(r"[a-zA-Z0-9]+", text)
     if any(w in ID_KEYWORDS for w in words):
         return "Nasional"
     h_low = (handle or "").lower()
-    if h_low.endswith("id") or "_id" in h_low or ".id" in h_low or "indonesia" in text:
+    if "_id" in h_low or ".id" in h_low or "indonesia" in text:
         return "Nasional"
-    if cntry and cntry != "ID":
-        return "Internasional"
-    return "Internasional"
+    return "Belum diketahui"
 
 
 def get_conn() -> sqlite3.Connection:
@@ -106,14 +104,14 @@ def init_db() -> None:
             "ALTER TABLE channels ADD COLUMN yt_video_count INTEGER DEFAULT 0",
             "ALTER TABLE channels ADD COLUMN subscriber_count INTEGER DEFAULT 0",
             "ALTER TABLE channels ADD COLUMN watched_count INTEGER DEFAULT 0",
-            "ALTER TABLE channels ADD COLUMN region TEXT DEFAULT 'Nasional'",
+            "ALTER TABLE channels ADD COLUMN region TEXT DEFAULT 'Belum diketahui'",
             "ALTER TABLE channels ADD COLUMN status TEXT DEFAULT 'subscribed'",
             "ALTER TABLE channels ADD COLUMN views_hp INTEGER DEFAULT 0",
             "ALTER TABLE channels ADD COLUMN views_laptop INTEGER DEFAULT 0",
             "ALTER TABLE channels ADD COLUMN views_total INTEGER GENERATED ALWAYS AS (COALESCE(views_hp, 0) + COALESCE(views_laptop, 0)) VIRTUAL",
             "ALTER TABLE channels ADD COLUMN updated_at TEXT DEFAULT ''",
             "ALTER TABLE videos ADD COLUMN duration_seconds INTEGER DEFAULT 0",
-            "ALTER TABLE videos ADD COLUMN region TEXT DEFAULT 'Nasional'",
+            "ALTER TABLE videos ADD COLUMN region TEXT DEFAULT 'Belum diketahui'",
             "ALTER TABLE videos ADD COLUMN views_hp INTEGER DEFAULT 0",
             "ALTER TABLE videos ADD COLUMN views_laptop INTEGER DEFAULT 0",
             "ALTER TABLE videos ADD COLUMN views_total INTEGER GENERATED ALWAYS AS (COALESCE(views_hp, 0) + COALESCE(views_laptop, 0)) VIRTUAL",
@@ -257,7 +255,7 @@ def subscribe_channel(channel_id: str) -> None:
 
 
 def set_channel_region(channel_id: str, region: str) -> str:
-    reg = "Nasional" if region == "Nasional" else "Internasional"
+    reg = region if region in ("Nasional", "Internasional", "Belum diketahui") else "Belum diketahui"
     now_iso = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
         conn.execute(
@@ -283,7 +281,7 @@ def upsert_videos(videos: list[dict]) -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
         ch_rows = conn.execute("SELECT channel_id, region, status FROM channels").fetchall()
-        ch_region_map = {r["channel_id"]: (r["region"] or "Nasional") for r in ch_rows}
+        ch_region_map = {r["channel_id"]: (r["region"] or "Belum diketahui") for r in ch_rows}
         unfollowed_set = {r["channel_id"] for r in ch_rows if r["status"] == "unfollowed"}
 
         filtered_videos = []
@@ -406,8 +404,8 @@ def list_channels(region: str = "all", include_unfollowed: bool = False) -> list
     params: list = []
     if not include_unfollowed:
         clauses.append("COALESCE(c.status, 'subscribed') != 'unfollowed'")
-    if region in ("Nasional", "Internasional"):
-        clauses.append("COALESCE(c.region, 'Nasional') = ?")
+    if region in ("Nasional", "Internasional", "Belum diketahui"):
+        clauses.append("COALESCE(c.region, 'Belum diketahui') = ?")
         params.append(region)
     where_sql = " AND ".join(clauses)
     with get_conn() as conn:
@@ -418,7 +416,7 @@ def list_channels(region: str = "all", include_unfollowed: bool = False) -> list
                    COALESCE(c.views_laptop, 0) AS views_laptop,
                    COALESCE(c.views_total, c.watched_count, 0) AS views_total,
                    COALESCE(c.views_total, c.watched_count, 0) AS watched_count,
-                   COALESCE(c.region, 'Nasional') AS region,
+                   COALESCE(c.region, 'Belum diketahui') AS region,
                    COALESCE(c.status, 'subscribed') AS status,
                    COUNT(v.video_id) AS synced_video_count,
                    CASE WHEN c.yt_video_count > COUNT(v.video_id) THEN c.yt_video_count ELSE COUNT(v.video_id) END AS video_count
@@ -521,8 +519,8 @@ def query_videos(
     if channel_id:
         clauses.append("videos.channel_id = ?")
         params.append(channel_id)
-    if region in ("Nasional", "Internasional"):
-        clauses.append("COALESCE(videos.region, 'Nasional') = ?")
+    if region in ("Nasional", "Internasional", "Belum diketahui"):
+        clauses.append("COALESCE(videos.region, 'Belum diketahui') = ?")
         params.append(region)
     if min_minutes > 0:
         clauses.append("videos.duration_seconds >= ?")
@@ -544,7 +542,7 @@ def query_videos(
                    COALESCE(videos.views_hp, 0) AS views_hp,
                    COALESCE(videos.views_laptop, 0) AS views_laptop,
                    COALESCE(videos.views_total, 0) AS views_total,
-                   COALESCE(videos.region, 'Nasional') AS region,
+                   COALESCE(videos.region, 'Belum diketahui') AS region,
                    COALESCE((SELECT c.views_hp FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS channel_views_hp,
                    COALESCE((SELECT c.views_laptop FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS channel_views_laptop,
                    COALESCE((SELECT c.views_total FROM channels c WHERE c.channel_id = videos.channel_id), 0) AS watched_count
@@ -643,7 +641,7 @@ def sync_device_data(payload: dict) -> dict:
                     if c_status in ("subscribed", "unfollowed"):
                         new_status = c_status
                     new_upd = c_upd
-                    if c_region in ("Nasional", "Internasional"):
+                    if c_region in ("Nasional", "Internasional", "Belum diketahui"):
                         new_region = c_region
 
                 conn.execute(
@@ -665,7 +663,7 @@ def sync_device_data(payload: dict) -> dict:
             else:
                 # Creator baru dari perangkat lain: tambahkan jika tidak unfollowed (atau simpan tombstone jika unfollowed)
                 uploads_pid = "UU" + cid[2:] if cid.startswith("UC") else cid
-                reg = c_region if c_region in ("Nasional", "Internasional") else classify_region(c_title)
+                reg = c_region if c_region in ("Nasional", "Internasional", "Belum diketahui") else classify_region(c_title)
                 conn.execute(
                     """
                     INSERT INTO channels(
@@ -710,7 +708,7 @@ def sync_device_data(payload: dict) -> dict:
             for r in conn.execute(
                 """
                 SELECT channel_id, title, handle, thumbnail_url, uploads_playlist_id,
-                       COALESCE(region, 'Nasional') AS region,
+                       COALESCE(region, 'Belum diketahui') AS region,
                        COALESCE(status, 'subscribed') AS status,
                        COALESCE(views_hp, 0) AS views_hp,
                        COALESCE(views_laptop, 0) AS views_laptop,

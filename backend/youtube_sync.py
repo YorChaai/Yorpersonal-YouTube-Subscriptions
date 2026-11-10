@@ -327,6 +327,10 @@ def refresh_all_channel_statistics(api_key: str = "", oauth_token: str = "") -> 
                         "UPDATE channels SET yt_video_count=?, subscriber_count=?, region=?, handle=CASE WHEN ? != '' THEN ? ELSE handle END WHERE channel_id=?",
                         (v_count, sub_count, reg, handle, handle, cid),
                     )
+                    conn.execute(
+                        "UPDATE videos SET region=? WHERE channel_id=?",
+                        (reg, cid),
+                    )
                     updated += 1
     return updated
 
