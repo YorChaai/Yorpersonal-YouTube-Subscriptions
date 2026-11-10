@@ -3868,6 +3868,39 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                 period.endsWith('y') &&
                 int.tryParse(period.substring(0, period.length - 1)) != null;
 
+            Widget regionChoice(String value, String label) {
+              final active = selectedRegion == value;
+              return ChoiceChip(
+                label: SizedBox(
+                  width: double.infinity,
+                  child: Text(label, textAlign: TextAlign.center),
+                ),
+                selected: active,
+                selectedColor: value == 'Nasional'
+                    ? const Color(0xFFD32F2F)
+                    : (value == 'Internasional'
+                          ? const Color(0xFF1976D2)
+                          : (value == 'Belum diketahui'
+                                ? const Color(0xFF616161)
+                                : Colors.white)),
+                backgroundColor: const Color(0xFF2C2C2C),
+                labelStyle: TextStyle(
+                  color: active && value == 'all' ? Colors.black : Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                ),
+                onSelected: (_) {
+                  setState(() {
+                    selectedRegion = value;
+                    currentPage = 1;
+                  });
+                  setModalState(() {});
+                  _saveUiPreferences();
+                  _fetchVideos();
+                },
+              );
+            }
+
             return SafeArea(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -3940,51 +3973,36 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final reg in [
-                            ('all', '?? Semua'),
-                            ('Nasional', '???? Nasional'),
-                            ('Internasional', '?? Internasional'),
-                            ('Belum diketahui', 'Belum diketahui'),
-                          ])
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(reg.$2),
-                                selected: selectedRegion == reg.$1,
-                                selectedColor: reg.$1 == 'Nasional'
-                                    ? const Color(0xFFD32F2F)
-                                    : (reg.$1 == 'Internasional'
-                                          ? const Color(0xFF1976D2)
-                                          : (reg.$1 == 'Belum diketahui'
-                                                ? const Color(0xFF616161)
-                                                : Colors.white)),
-                                backgroundColor: const Color(0xFF2C2C2C),
-                                labelStyle: TextStyle(
-                                  color:
-                                      selectedRegion == reg.$1 &&
-                                          reg.$1 == 'all'
-                                      ? Colors.black
-                                      : Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12.5,
-                                ),
-                                onSelected: (_) {
-                                  setState(() {
-                                    selectedRegion = reg.$1;
-                                    currentPage = 1;
-                                  });
-                                  setModalState(() {});
-                                  _saveUiPreferences();
-                                  _fetchVideos();
-                                },
+                    Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: regionChoice('Nasional', 'Nasional'),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: regionChoice(
+                                'Internasional',
+                                'Internasional',
                               ),
                             ),
-                        ],
-                      ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: regionChoice('all', 'Semua')),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: regionChoice(
+                                'Belum diketahui',
+                                'Belum diketahui',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 14),
                     const Text(
