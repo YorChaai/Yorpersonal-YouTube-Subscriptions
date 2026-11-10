@@ -4134,16 +4134,23 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                                   durationRange.end / 120 * trackWidth;
                               final startDistance = (x - startX).abs();
                               final endDistance = (x - endX).abs();
-                              const thumbHitRadius = 16.0;
+                              // Make the touch target much larger than the
+                              // visible thumb, which is difficult to grab on
+                              // a phone. Track presses still do not move it.
+                              const thumbHitRadius = 36.0;
 
                               if (startDistance <= thumbHitRadius ||
                                   endDistance <= thumbHitRadius) {
-                                _activeDurationThumb =
-                                    startDistance <= endDistance
-                                    ? Thumb.start
-                                    : Thumb.end;
+                                setModalState(
+                                  () => _activeDurationThumb =
+                                      startDistance <= endDistance
+                                      ? Thumb.start
+                                      : Thumb.end,
+                                );
                               } else {
-                                _activeDurationThumb = null;
+                                setModalState(
+                                  () => _activeDurationThumb = null,
+                                );
                               }
                             },
                             onHorizontalDragUpdate: (details) {
@@ -4177,16 +4184,61 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
                             },
                             onHorizontalDragEnd: (_) => finishDurationDrag(),
                             onHorizontalDragCancel: finishDurationDrag,
-                            child: IgnorePointer(
-                              child: RangeSlider(
-                                values: durationRange,
-                                min: 0,
-                                max: 120,
-                                divisions: 120,
-                                activeColor: const Color(0xFFFF0033),
-                                inactiveColor: const Color(0xFF444444),
-                                onChanged: (_) {},
-                              ),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                IgnorePointer(
+                                  child: RangeSlider(
+                                    values: durationRange,
+                                    min: 0,
+                                    max: 120,
+                                    divisions: 120,
+                                    activeColor: const Color(0xFFFF0033),
+                                    inactiveColor: const Color(0xFF444444),
+                                    onChanged: (_) {},
+                                  ),
+                                ),
+                                for (final thumb in [Thumb.start, Thumb.end])
+                                  Positioned(
+                                    left:
+                                        trackInset +
+                                        (thumb == Thumb.start
+                                                ? durationRange.start
+                                                : durationRange.end) /
+                                            120 *
+                                            trackWidth -
+                                        11,
+                                    child: IgnorePointer(
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 120,
+                                        ),
+                                        width: 22,
+                                        height: 22,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: const Color(0xFFFF0033),
+                                          border: Border.all(
+                                            color: Colors.white,
+                                            width: _activeDurationThumb == thumb
+                                                ? 2.5
+                                                : 1.5,
+                                          ),
+                                          boxShadow: [
+                                            if (_activeDurationThumb == thumb)
+                                              BoxShadow(
+                                                color: const Color(
+                                                  0xFFFF0033,
+                                                ).withValues(alpha: 0.55),
+                                                blurRadius: 14,
+                                                spreadRadius: 4,
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                           );
                         },
