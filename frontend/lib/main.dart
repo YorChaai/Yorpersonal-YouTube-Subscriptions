@@ -21,6 +21,16 @@ class PersonalYouTubeApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+        snackBarTheme: const SnackBarThemeData(
+          backgroundColor: Color(0xFF303030),
+          contentTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+          actionTextColor: Colors.cyanAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFFFF0033),
           surface: Color(0xFF212121),
@@ -951,8 +961,9 @@ class _YouTubeHomeScreenState extends State<YouTubeHomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: const Color(0xFF272727),
-            duration: const Duration(seconds: 2),
+            backgroundColor: const Color(0xFF303030),
+            duration: const Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
             content: Text(
               '⏳ Sinkronisasi berjalan di latar belakang ($refreshProgress%)... Setelah 100% (Hijau), klik lagi untuk menampilkan video baru.',
             ),
